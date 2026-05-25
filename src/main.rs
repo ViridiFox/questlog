@@ -5,9 +5,9 @@ mod state;
 mod tui;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
 use chrono::Utc;
 use chrono_tz::Tz;
+use clap::{Parser, Subcommand};
 use std::str::FromStr;
 
 fn system_tz() -> Tz {
@@ -141,7 +141,10 @@ fn main() -> Result<()> {
             let new_state = tui::run(quests, app_state, &config, tz)?;
             state::save_state(&new_state)?;
         }
-        Some(Command::List { game, sort_done_last }) => {
+        Some(Command::List {
+            game,
+            sort_done_last,
+        }) => {
             let now = Utc::now();
             let filter = game.as_deref().map(|g| g.to_lowercase());
 
@@ -157,7 +160,7 @@ fn main() -> Result<()> {
             let mut rows: Vec<Row> = quests
                 .iter()
                 .filter(|q| {
-                    filter.as_deref().map_or(true, |g| {
+                    filter.as_deref().is_none_or(|g| {
                         q.game_id.to_lowercase() == g || q.game_name.to_lowercase() == g
                     })
                 })
@@ -183,9 +186,9 @@ fn main() -> Result<()> {
                 rows.sort_by_key(|r| !r.available);
             }
 
-            let w_status   = rows.iter().map(|r| r.status.len()).max().unwrap();
-            let w_game     = rows.iter().map(|r| r.game.len()).max().unwrap();
-            let w_name     = rows.iter().map(|r| r.name.len()).max().unwrap();
+            let w_status = rows.iter().map(|r| r.status.len()).max().unwrap();
+            let w_game = rows.iter().map(|r| r.game.len()).max().unwrap();
+            let w_name = rows.iter().map(|r| r.name.len()).max().unwrap();
             let w_schedule = rows.iter().map(|r| r.schedule.len()).max().unwrap();
 
             for r in &rows {
@@ -216,10 +219,16 @@ fn main() -> Result<()> {
             if games.is_empty() {
                 return Ok(());
             }
-            let w_id   = games.iter().map(|(id, _, _)| id.len()).max().unwrap();
+            let w_id = games.iter().map(|(id, _, _)| id.len()).max().unwrap();
             let w_name = games.iter().map(|(_, name, _)| name.len()).max().unwrap();
             for (id, name, count) in &games {
-                println!("{:<w_id$}  {:<w_name$}  {} quest{}", id, name, count, if *count == 1 { "" } else { "s" });
+                println!(
+                    "{:<w_id$}  {:<w_name$}  {} quest{}",
+                    id,
+                    name,
+                    count,
+                    if *count == 1 { "" } else { "s" }
+                );
             }
         }
         Some(Command::Done { name, game }) => {
@@ -236,12 +245,36 @@ fn main() -> Result<()> {
                 .unwrap_or(&game);
             println!("Marked '{}/{}' as complete.", display_name, name);
         }
-        Some(Command::AddGame { id, name, timezone, reset_time, reset_day }) => {
-            config_edit::add_game(&config_edit::GameSpec { id: id.clone(), name: name.clone(), timezone, reset_time, reset_day })?;
+        Some(Command::AddGame {
+            id,
+            name,
+            timezone,
+            reset_time,
+            reset_day,
+        }) => {
+            config_edit::add_game(&config_edit::GameSpec {
+                id: id.clone(),
+                name: name.clone(),
+                timezone,
+                reset_time,
+                reset_day,
+            })?;
             println!("Added game '{id}' ({name}) to config.");
         }
-        Some(Command::UpdateGame { id, name, timezone, reset_time, reset_day }) => {
-            config_edit::update_game(&config_edit::GameSpec { id: id.clone(), name: name.clone(), timezone, reset_time, reset_day })?;
+        Some(Command::UpdateGame {
+            id,
+            name,
+            timezone,
+            reset_time,
+            reset_day,
+        }) => {
+            config_edit::update_game(&config_edit::GameSpec {
+                id: id.clone(),
+                name: name.clone(),
+                timezone,
+                reset_time,
+                reset_day,
+            })?;
             println!("Updated game '{id}'.");
         }
         Some(Command::RemoveGame { id }) => {
@@ -249,16 +282,29 @@ fn main() -> Result<()> {
             println!("Removed game '{id}' from config.");
         }
         Some(Command::AddQuest { name, game, reset }) => {
-            config_edit::add_quest(&config_edit::QuestSpec { game_id: game.clone(), name: name.clone(), reset })?;
-            println!("Added quest '{name}' to game '{game}'.");
-        }
-        Some(Command::UpdateQuest { name, game, new_name, reset }) => {
-            let effective_name = new_name.as_deref().unwrap_or(&name);
-            config_edit::update_quest(&game, &name, &config_edit::QuestSpec {
+            config_edit::add_quest(&config_edit::QuestSpec {
                 game_id: game.clone(),
-                name: effective_name.to_string(),
+                name: name.clone(),
                 reset,
             })?;
+            println!("Added quest '{name}' to game '{game}'.");
+        }
+        Some(Command::UpdateQuest {
+            name,
+            game,
+            new_name,
+            reset,
+        }) => {
+            let effective_name = new_name.as_deref().unwrap_or(&name);
+            config_edit::update_quest(
+                &game,
+                &name,
+                &config_edit::QuestSpec {
+                    game_id: game.clone(),
+                    name: effective_name.to_string(),
+                    reset,
+                },
+            )?;
             println!("Updated quest '{name}' in game '{game}'.");
         }
         Some(Command::RemoveQuest { name, game }) => {

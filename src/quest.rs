@@ -1,5 +1,5 @@
 use crate::config::{GameConfig, QuestConfig, RawConfig, ResetRuleRaw, ResetSpec};
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use chrono::{DateTime, Datelike, Duration, NaiveTime, TimeZone, Utc, Weekday};
 use chrono_tz::Tz;
 use std::str::FromStr;
@@ -63,7 +63,11 @@ impl Quest {
     /// For interval rules this is completion-anchored.
     /// For clock-anchored rules (daily/weekly/schedule) this returns the most
     /// recent past tick, so callers can compare it against last_completed.
-    pub fn last_reset(rule: &ResetRule, last_completed: Option<DateTime<Utc>>, now: DateTime<Utc>) -> DateTime<Utc> {
+    pub fn last_reset(
+        rule: &ResetRule,
+        last_completed: Option<DateTime<Utc>>,
+        now: DateTime<Utc>,
+    ) -> DateTime<Utc> {
         match rule {
             ResetRule::Interval { duration } => {
                 // Becomes available at last_completed + duration.
@@ -77,7 +81,11 @@ impl Quest {
     }
 
     /// Next upcoming reset time for display purposes.
-    pub fn next_reset_time(rule: &ResetRule, last_completed: Option<DateTime<Utc>>, now: DateTime<Utc>) -> DateTime<Utc> {
+    pub fn next_reset_time(
+        rule: &ResetRule,
+        last_completed: Option<DateTime<Utc>>,
+        now: DateTime<Utc>,
+    ) -> DateTime<Utc> {
         match rule {
             ResetRule::Interval { duration } => {
                 let base = last_completed.unwrap_or(now - *duration - Duration::seconds(1));
@@ -96,13 +104,17 @@ impl Quest {
             let reset = Self::last_reset(r, last_completed, now);
             match r {
                 ResetRule::Interval { .. } => now >= reset,
-                _ => last_completed.map_or(true, |lc| lc < reset),
+                _ => last_completed.is_none_or(|lc| lc < reset),
             }
         })
     }
 
     /// Returns the soonest upcoming reset time across all rules.
-    pub fn next_available(&self, last_completed: Option<DateTime<Utc>>, now: DateTime<Utc>) -> DateTime<Utc> {
+    pub fn next_available(
+        &self,
+        last_completed: Option<DateTime<Utc>>,
+        now: DateTime<Utc>,
+    ) -> DateTime<Utc> {
         self.rules
             .iter()
             .map(|r| Self::next_reset_time(r, last_completed, now))
@@ -111,9 +123,16 @@ impl Quest {
     }
 
     /// Next reset formatted in the given timezone.
-    pub fn format_next_available(&self, last_completed: Option<DateTime<Utc>>, now: DateTime<Utc>, tz: Tz) -> String {
+    pub fn format_next_available(
+        &self,
+        last_completed: Option<DateTime<Utc>>,
+        now: DateTime<Utc>,
+        tz: Tz,
+    ) -> String {
         let next = self.next_available(last_completed, now);
-        next.with_timezone(&tz).format("%Y-%m-%d %H:%M %Z").to_string()
+        next.with_timezone(&tz)
+            .format("%Y-%m-%d %H:%M %Z")
+            .to_string()
     }
 
     /// Human-readable label describing the reset schedule, e.g. "daily 16:00", "every 4h".
@@ -321,7 +340,9 @@ fn rule_from_raw(
                 + raw.days.unwrap_or(0) * 60 * 24
                 + raw.weeks.unwrap_or(0) * 60 * 24 * 7;
             if total_minutes == 0 {
-                bail!("interval reset requires at least one duration field (minutes/hours/days/weeks)");
+                bail!(
+                    "interval reset requires at least one duration field (minutes/hours/days/weeks)"
+                );
             }
             Ok(ResetRule::Interval {
                 duration: Duration::minutes(total_minutes as i64),
@@ -353,7 +374,13 @@ pub fn build_quests(config: &RawConfig) -> Result<Vec<Quest>> {
         let defaults = config.resolved_defaults_for(game);
 
         for quest_cfg in &game.quests {
-            let rules = build_rules(quest_cfg, game, &defaults.reset_time, &defaults.reset_day, &defaults.timezone)?;
+            let rules = build_rules(
+                quest_cfg,
+                game,
+                &defaults.reset_time,
+                &defaults.reset_day,
+                &defaults.timezone,
+            )?;
             quests.push(Quest {
                 game_id: game_id.clone(),
                 game_name: game.name.clone(),
@@ -398,9 +425,19 @@ fn build_rules(
                 },
                 other => bail!("unknown reset shorthand '{}'", other),
             };
-            Ok(vec![rule_from_raw(&raw, default_time, default_day, default_tz)?])
+            Ok(vec![rule_from_raw(
+                &raw,
+                default_time,
+                default_day,
+                default_tz,
+            )?])
         }
-        ResetSpec::Single(raw) => Ok(vec![rule_from_raw(raw, default_time, default_day, default_tz)?]),
+        ResetSpec::Single(raw) => Ok(vec![rule_from_raw(
+            raw,
+            default_time,
+            default_day,
+            default_tz,
+        )?]),
         ResetSpec::Multiple(raws) => raws
             .iter()
             .map(|r| rule_from_raw(r, default_time, default_day, default_tz))
@@ -408,7 +445,7 @@ fn build_rules(
     }
 }
 
-pub fn sort_quests(quests: &mut Vec<Quest>) {
+pub fn sort_quests(quests: &mut [Quest]) {
     quests.sort_by(|a, b| {
         a.reset_class()
             .cmp(&b.reset_class())

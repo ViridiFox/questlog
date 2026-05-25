@@ -4,6 +4,7 @@ use crate::tui::{App, Modal, ModalKind};
 use chrono::Utc;
 use chrono_tz::Tz;
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -11,7 +12,6 @@ use ratatui::{
         Block, BorderType, Borders, Cell, Clear, Padding, Paragraph, Row, Table, TableState, Tabs,
         Wrap,
     },
-    Frame,
 };
 
 pub fn draw(f: &mut Frame, app: &App, tz: Tz) {
@@ -24,7 +24,11 @@ pub fn draw(f: &mut Frame, app: &App, tz: Tz) {
 
     let has_status = app.status_msg.is_some();
     let main_constraints = if has_status {
-        vec![Constraint::Length(3), Constraint::Min(0), Constraint::Length(1)]
+        vec![
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ]
     } else {
         vec![Constraint::Length(3), Constraint::Min(0)]
     };
@@ -37,7 +41,11 @@ pub fn draw(f: &mut Frame, app: &App, tz: Tz) {
     let tabs = Tabs::new(tab_titles)
         .select(app.selected_tab)
         .block(Block::default().borders(Borders::ALL).title("questlog"))
-        .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+        .highlight_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
     f.render_widget(tabs, chunks[0]);
 
     let visible_quests: Vec<&Quest> = if app.selected_tab == 0 {
@@ -50,9 +58,27 @@ pub fn draw(f: &mut Frame, app: &App, tz: Tz) {
     let now = Utc::now();
 
     if app.selected_tab == 0 && app.group_by_game {
-        draw_grouped(f, chunks[1], &visible_quests, state, now, app.sort_done_last, tz);
+        draw_grouped(
+            f,
+            chunks[1],
+            &visible_quests,
+            state,
+            now,
+            app.sort_done_last,
+            tz,
+        );
     } else {
-        draw_list(f, chunks[1], &visible_quests, state, now, app.selected_quest, None, app.sort_done_last, tz);
+        draw_list(
+            f,
+            chunks[1],
+            &visible_quests,
+            state,
+            now,
+            app.selected_quest,
+            None,
+            app.sort_done_last,
+            tz,
+        );
     }
 
     if has_status {
@@ -103,10 +129,21 @@ fn draw_grouped(
             .first()
             .map(|q| q.game_name.as_str())
             .unwrap_or(game_id);
-        draw_list(f, chunks[i], &game_quests, state, now, 0, Some(title), sort_done_last, tz);
+        draw_list(
+            f,
+            chunks[i],
+            &game_quests,
+            state,
+            now,
+            0,
+            Some(title),
+            sort_done_last,
+            tz,
+        );
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_list(
     f: &mut Frame,
     area: Rect,
@@ -160,7 +197,11 @@ fn draw_list(
                 (Color::DarkGray, true)
             };
             let base = Style::default().fg(fg);
-            let meta = if dim { base.add_modifier(Modifier::DIM) } else { base };
+            let meta = if dim {
+                base.add_modifier(Modifier::DIM)
+            } else {
+                base
+            };
             Row::new(vec![
                 Cell::from(cols[0].as_str()).style(base),
                 Cell::from(format!("{:>width$}", cols[1], width = w_schedule)).style(meta),
@@ -175,7 +216,11 @@ fn draw_list(
 
     let table = Table::new(
         table_rows,
-        [Constraint::Min(20), Constraint::Length(w_schedule as u16), Constraint::Length(20)],
+        [
+            Constraint::Min(20),
+            Constraint::Length(w_schedule as u16),
+            Constraint::Length(20),
+        ],
     )
     .block(block)
     .column_spacing(2)
@@ -208,20 +253,20 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
 fn draw_help(f: &mut Frame) {
     const BINDS: &[(&str, &str)] = &[
         ("space / enter", "Mark quest complete"),
-        ("u",             "Mark quest incomplete"),
-        ("j / ↓",         "Move down"),
-        ("k / ↑",         "Move up"),
-        ("Tab",           "Next tab"),
-        ("Shift-Tab",     "Previous tab"),
-        ("g",             "Toggle group-by-game (overview)"),
-        ("s",             "Toggle sort done to end"),
-        ("a",             "Add quest (on game tab)"),
-        ("e",             "Edit selected quest"),
-        ("d",             "Delete selected quest"),
-        ("A",             "Add game"),
-        ("D",             "Delete current game (on game tab)"),
-        ("?",             "Toggle this help"),
-        ("q",             "Quit"),
+        ("u", "Mark quest incomplete"),
+        ("j / ↓", "Move down"),
+        ("k / ↑", "Move up"),
+        ("Tab", "Next tab"),
+        ("Shift-Tab", "Previous tab"),
+        ("g", "Toggle group-by-game (overview)"),
+        ("s", "Toggle sort done to end"),
+        ("a", "Add quest (on game tab)"),
+        ("e", "Edit selected quest"),
+        ("d", "Delete selected quest"),
+        ("A", "Add game"),
+        ("D", "Delete current game (on game tab)"),
+        ("?", "Toggle this help"),
+        ("q", "Quit"),
     ];
 
     let key_col = BINDS.iter().map(|(k, _)| k.len()).max().unwrap_or(0) as u16;
@@ -237,7 +282,9 @@ fn draw_help(f: &mut Frame) {
             Line::from(vec![
                 Span::styled(
                     format!("{:>width$}", key, width = key_col as usize),
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("  "),
                 Span::raw(*desc),
@@ -334,7 +381,9 @@ fn draw_confirm_modal(f: &mut Frame, title: &str, message: &str, modal: &Modal) 
         .border_type(BorderType::Rounded)
         .title(Span::styled(
             format!(" {title} "),
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
         ))
         .title_alignment(Alignment::Center)
         .padding(Padding::horizontal(1))
@@ -348,12 +397,7 @@ fn draw_confirm_modal(f: &mut Frame, title: &str, message: &str, modal: &Modal) 
     f.render_widget(p, area);
 }
 
-fn draw_form_modal(
-    f: &mut Frame,
-    title: &str,
-    labels: &[(&str, usize)],
-    modal: &Modal,
-) {
+fn draw_form_modal(f: &mut Frame, title: &str, labels: &[(&str, usize)], modal: &Modal) {
     const POPUP_BG: Color = Color::Reset;
     const INACTIVE_BG: Color = Color::Black;
     const WIDTH: u16 = 64;
@@ -371,19 +415,30 @@ fn draw_form_modal(
         .border_type(BorderType::Rounded)
         .title(Span::styled(
             format!(" {title} "),
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
         ))
         .title_alignment(Alignment::Center)
         .style(Style::default().bg(POPUP_BG));
     f.render_widget(outer_block, area);
 
     // Work inside the border, with 1-cell horizontal padding.
-    let inner = area.inner(Margin { horizontal: 2, vertical: 1 });
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
 
     // Build row constraints: label + input + gap for each field, then hint, then optional error.
     let mut row_constraints: Vec<Constraint> = labels
         .iter()
-        .flat_map(|_| [Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)])
+        .flat_map(|_| {
+            [
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+            ]
+        })
         .collect();
     row_constraints.push(Constraint::Length(1)); // hint
     if has_err {
@@ -402,14 +457,20 @@ fn draw_form_modal(
 
         // ── label ───────────────────────────────────────────────────────────
         let label_style = if focused {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::Gray)
         };
         f.render_widget(Paragraph::new(*label).style(label_style), rows[base]);
 
         // ── input ────────────────────────────────────────────────────────────
-        let value = modal.fields.get(*field_idx).map(|s| s.as_str()).unwrap_or("");
+        let value = modal
+            .fields
+            .get(*field_idx)
+            .map(|s| s.as_str())
+            .unwrap_or("");
 
         let box_rect = rows[base + 1];
 
@@ -420,12 +481,12 @@ fn draw_form_modal(
         );
 
         let content: Line = if focused {
-            Line::from(vec![
-                Span::styled(
-                    format!(" {value} "),
-                    Style::default().add_modifier(Modifier::REVERSED).add_modifier(Modifier::BOLD),
-                ),
-            ])
+            Line::from(vec![Span::styled(
+                format!(" {value} "),
+                Style::default()
+                    .add_modifier(Modifier::REVERSED)
+                    .add_modifier(Modifier::BOLD),
+            )])
         } else {
             Line::from(Span::styled(
                 format!(" {value}"),
@@ -438,11 +499,26 @@ fn draw_form_modal(
     // ── hint row ─────────────────────────────────────────────────────────────
     let hint_idx = labels.len() * 3;
     let hint = Line::from(vec![
-        Span::styled("Tab", Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "Tab",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" next field  ", Style::default().fg(Color::DarkGray)),
-        Span::styled("Enter", Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "Enter",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" submit  ", Style::default().fg(Color::DarkGray)),
-        Span::styled("Esc", Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "Esc",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" cancel", Style::default().fg(Color::DarkGray)),
     ]);
     f.render_widget(Paragraph::new(hint), rows[hint_idx]);

@@ -4,7 +4,7 @@
 //! back in one atomic step (write to a temp file then rename).  Comments and
 //! existing formatting are preserved.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use toml_edit::{Array, DocumentMut, Item, Table, value};
 
 use crate::config::config_path;
@@ -127,12 +127,13 @@ pub struct QuestSpec {
 /// handling both array-of-tables and inline-array forms.
 fn quest_exists_in_game(game: &Table, name: &str) -> bool {
     match game.get("quests") {
-        Some(Item::ArrayOfTables(aot)) => aot.iter().any(|t| {
-            t.get("name").and_then(|v| v.as_str()) == Some(name)
-        }),
-        Some(Item::Value(v)) => v.as_array().map_or(false, |arr| {
+        Some(Item::ArrayOfTables(aot)) => aot
+            .iter()
+            .any(|t| t.get("name").and_then(|v| v.as_str()) == Some(name)),
+        Some(Item::Value(v)) => v.as_array().is_some_and(|arr| {
             arr.iter().any(|entry| {
-                entry.as_inline_table()
+                entry
+                    .as_inline_table()
                     .and_then(|t| t.get("name"))
                     .and_then(|v| v.as_str())
                     == Some(name)
@@ -198,7 +199,10 @@ pub fn add_quest(spec: &QuestSpec) -> Result<()> {
                 aot.push(entry);
                 game["quests"] = Item::ArrayOfTables(aot);
             }
-            _ => bail!("unexpected TOML structure for 'quests' in game '{}'", spec.game_id),
+            _ => bail!(
+                "unexpected TOML structure for 'quests' in game '{}'",
+                spec.game_id
+            ),
         }
     }
     write_doc(&doc)
@@ -221,7 +225,9 @@ pub fn update_quest(game_id: &str, quest_name: &str, new_spec: &QuestSpec) -> Re
                 let entry = aot
                     .iter_mut()
                     .find(|t| t.get("name").and_then(|v| v.as_str()) == Some(quest_name))
-                    .with_context(|| format!("quest '{}' not found in game '{}'", quest_name, game_id))?;
+                    .with_context(|| {
+                        format!("quest '{}' not found in game '{}'", quest_name, game_id)
+                    })?;
                 entry["name"] = value(new_spec.name.as_str());
                 entry["reset"] = Item::Value(reset_val);
             }
@@ -230,12 +236,15 @@ pub fn update_quest(game_id: &str, quest_name: &str, new_spec: &QuestSpec) -> Re
                 let idx = arr
                     .iter()
                     .position(|entry| {
-                        entry.as_inline_table()
+                        entry
+                            .as_inline_table()
                             .and_then(|t| t.get("name"))
                             .and_then(|v| v.as_str())
                             == Some(quest_name)
                     })
-                    .with_context(|| format!("quest '{}' not found in game '{}'", quest_name, game_id))?;
+                    .with_context(|| {
+                        format!("quest '{}' not found in game '{}'", quest_name, game_id)
+                    })?;
                 let mut qt = toml_edit::InlineTable::new();
                 qt.insert("name", new_spec.name.as_str().into());
                 qt.insert("reset", reset_val);
@@ -262,7 +271,9 @@ pub fn remove_quest(game_id: &str, quest_name: &str) -> Result<()> {
                 let idx = aot
                     .iter()
                     .position(|t| t.get("name").and_then(|v| v.as_str()) == Some(quest_name))
-                    .with_context(|| format!("quest '{}' not found in game '{}'", quest_name, game_id))?;
+                    .with_context(|| {
+                        format!("quest '{}' not found in game '{}'", quest_name, game_id)
+                    })?;
                 aot.remove(idx);
             }
             Some(Item::Value(v)) => {
@@ -270,12 +281,15 @@ pub fn remove_quest(game_id: &str, quest_name: &str) -> Result<()> {
                 let idx = arr
                     .iter()
                     .position(|entry| {
-                        entry.as_inline_table()
+                        entry
+                            .as_inline_table()
                             .and_then(|t| t.get("name"))
                             .and_then(|v| v.as_str())
                             == Some(quest_name)
                     })
-                    .with_context(|| format!("quest '{}' not found in game '{}'", quest_name, game_id))?;
+                    .with_context(|| {
+                        format!("quest '{}' not found in game '{}'", quest_name, game_id)
+                    })?;
                 arr.remove(idx);
             }
             _ => bail!("game '{}' has no quests", game_id),
