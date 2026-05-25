@@ -1,4 +1,5 @@
 mod config;
+mod config_edit;
 mod quest;
 mod state;
 mod tui;
@@ -34,11 +35,92 @@ enum Command {
         #[arg(long)]
         sort_done_last: bool,
     },
+    /// List all configured games
+    ListGames,
     /// Open the config file in $EDITOR
     Edit,
     /// Mark a quest as complete
     Done {
         /// Quest name
+        name: String,
+        /// Game ID
+        #[arg(long)]
+        game: String,
+    },
+    /// Add a new game to the config
+    AddGame {
+        /// Game ID (used in config keys and --game flags)
+        #[arg(long)]
+        id: String,
+        /// Display name
+        #[arg(long)]
+        name: String,
+        /// IANA timezone (e.g. "Europe/Berlin")
+        #[arg(long)]
+        timezone: Option<String>,
+        /// Default reset time for daily/weekly quests (HH:MM)
+        #[arg(long)]
+        reset_time: Option<String>,
+        /// Default reset day for weekly quests
+        #[arg(long)]
+        reset_day: Option<String>,
+    },
+    /// Update an existing game's metadata
+    UpdateGame {
+        /// Game ID to update
+        #[arg(long)]
+        id: String,
+        /// New display name
+        #[arg(long)]
+        name: String,
+        /// IANA timezone (omit to clear)
+        #[arg(long)]
+        timezone: Option<String>,
+        /// Default reset time (omit to clear)
+        #[arg(long)]
+        reset_time: Option<String>,
+        /// Default reset day (omit to clear)
+        #[arg(long)]
+        reset_day: Option<String>,
+    },
+    /// Remove a game and all its quests from the config
+    RemoveGame {
+        /// Game ID to remove
+        #[arg(long)]
+        id: String,
+    },
+    /// Add a quest to a game in the config
+    AddQuest {
+        /// Quest name
+        #[arg(long)]
+        name: String,
+        /// Game ID
+        #[arg(long)]
+        game: String,
+        /// Reset spec: "daily", "weekly", or an inline TOML table
+        /// e.g. '{ type = "interval", hours = 4 }'
+        #[arg(long)]
+        reset: String,
+    },
+    /// Update a quest's name and/or reset spec
+    UpdateQuest {
+        /// Current quest name
+        #[arg(long)]
+        name: String,
+        /// Game ID
+        #[arg(long)]
+        game: String,
+        /// New quest name (defaults to current name)
+        #[arg(long)]
+        new_name: Option<String>,
+        /// New reset spec
+        #[arg(long)]
+        reset: String,
+    },
+    /// Remove a quest from the config
+    RemoveQuest {
+        /// Quest name
+        #[arg(long)]
         name: String,
         /// Game ID
         #[arg(long)]
@@ -56,7 +138,7 @@ fn main() -> Result<()> {
 
     match cli.command {
         None => {
-            let new_state = tui::run(quests, app_state, tz)?;
+            let new_state = tui::run(quests, app_state, &config, tz)?;
             state::save_state(&new_state)?;
         }
         Some(Command::List { game, sort_done_last }) => {
@@ -121,6 +203,25 @@ fn main() -> Result<()> {
                 .status()
                 .with_context(|| format!("failed to launch editor '{}'", editor))?;
         }
+        Some(Command::ListGames) => {
+            let mut games: Vec<(&str, &str, usize)> = config
+                .games
+                .iter()
+                .map(|(id, g)| {
+                    let count = quests.iter().filter(|q| q.game_id == *id).count();
+                    (id.as_str(), g.name.as_str(), count)
+                })
+                .collect();
+            games.sort_by_key(|(id, _, _)| *id);
+            if games.is_empty() {
+                return Ok(());
+            }
+            let w_id   = games.iter().map(|(id, _, _)| id.len()).max().unwrap();
+            let w_name = games.iter().map(|(_, name, _)| name.len()).max().unwrap();
+            for (id, name, count) in &games {
+                println!("{:<w_id$}  {:<w_name$}  {} quest{}", id, name, count, if *count == 1 { "" } else { "s" });
+            }
+        }
         Some(Command::Done { name, game }) => {
             let found = quests.iter().any(|q| q.game_id == game && q.name == name);
             if !found {
@@ -134,6 +235,35 @@ fn main() -> Result<()> {
                 .map(|q| q.game_name.as_str())
                 .unwrap_or(&game);
             println!("Marked '{}/{}' as complete.", display_name, name);
+        }
+        Some(Command::AddGame { id, name, timezone, reset_time, reset_day }) => {
+            config_edit::add_game(&config_edit::GameSpec { id: id.clone(), name: name.clone(), timezone, reset_time, reset_day })?;
+            println!("Added game '{id}' ({name}) to config.");
+        }
+        Some(Command::UpdateGame { id, name, timezone, reset_time, reset_day }) => {
+            config_edit::update_game(&config_edit::GameSpec { id: id.clone(), name: name.clone(), timezone, reset_time, reset_day })?;
+            println!("Updated game '{id}'.");
+        }
+        Some(Command::RemoveGame { id }) => {
+            config_edit::remove_game(&id)?;
+            println!("Removed game '{id}' from config.");
+        }
+        Some(Command::AddQuest { name, game, reset }) => {
+            config_edit::add_quest(&config_edit::QuestSpec { game_id: game.clone(), name: name.clone(), reset })?;
+            println!("Added quest '{name}' to game '{game}'.");
+        }
+        Some(Command::UpdateQuest { name, game, new_name, reset }) => {
+            let effective_name = new_name.as_deref().unwrap_or(&name);
+            config_edit::update_quest(&game, &name, &config_edit::QuestSpec {
+                game_id: game.clone(),
+                name: effective_name.to_string(),
+                reset,
+            })?;
+            println!("Updated quest '{name}' in game '{game}'.");
+        }
+        Some(Command::RemoveQuest { name, game }) => {
+            config_edit::remove_quest(&game, &name)?;
+            println!("Removed quest '{name}' from game '{game}'.");
         }
     }
 
