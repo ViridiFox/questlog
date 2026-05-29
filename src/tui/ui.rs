@@ -5,7 +5,7 @@ use chrono::Utc;
 use chrono_tz::Tz;
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
@@ -466,12 +466,6 @@ fn draw_form_modal(f: &mut Frame, title: &str, labels: &[(&str, usize)], modal: 
         f.render_widget(Paragraph::new(*label).style(label_style), rows[base]);
 
         // ── input ────────────────────────────────────────────────────────────
-        let value = modal
-            .fields
-            .get(*field_idx)
-            .map(|s| s.as_str())
-            .unwrap_or("");
-
         let box_rect = rows[base + 1];
 
         // Fill the row background first so the box has a solid colour.
@@ -480,20 +474,45 @@ fn draw_form_modal(f: &mut Frame, title: &str, labels: &[(&str, usize)], modal: 
             box_rect,
         );
 
-        let content: Line = if focused {
-            Line::from(vec![Span::styled(
-                format!(" {value} "),
-                Style::default()
-                    .add_modifier(Modifier::REVERSED)
-                    .add_modifier(Modifier::BOLD),
-            )])
+        if focused {
+            let input = modal.fields.get(*field_idx);
+            let value = input.map(|i| i.value()).unwrap_or("");
+            // Leave 1 cell of left padding; remainder is the visible text area.
+            let visible_width = (box_rect.width as usize).saturating_sub(2);
+            let scroll = input.map(|i| i.visual_scroll(visible_width)).unwrap_or(0);
+            let cursor_col = input
+                .map(|i| i.visual_cursor().max(scroll) - scroll)
+                .unwrap_or(0);
+
+            let text_rect = Rect {
+                x: box_rect.x + 1,
+                width: box_rect.width.saturating_sub(1),
+                ..box_rect
+            };
+            f.render_widget(
+                Paragraph::new(value)
+                    .style(Style::default().fg(Color::White).bg(INACTIVE_BG))
+                    .scroll((0, scroll as u16)),
+                text_rect,
+            );
+            f.set_cursor_position(Position::new(
+                text_rect.x + cursor_col as u16,
+                box_rect.y,
+            ));
         } else {
-            Line::from(Span::styled(
-                format!(" {value}"),
-                Style::default().fg(Color::Gray).bg(INACTIVE_BG),
-            ))
-        };
-        f.render_widget(Paragraph::new(content), box_rect);
+            let value = modal
+                .fields
+                .get(*field_idx)
+                .map(|i| i.value())
+                .unwrap_or("");
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    format!(" {value}"),
+                    Style::default().fg(Color::Gray).bg(INACTIVE_BG),
+                ))),
+                box_rect,
+            );
+        }
     }
 
     // ── hint row ─────────────────────────────────────────────────────────────

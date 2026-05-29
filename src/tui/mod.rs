@@ -8,13 +8,15 @@ use anyhow::Result;
 use chrono::Utc;
 use chrono_tz::Tz;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyModifiers},
+    event::{self, Event, KeyCode},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
 use std::time::Duration;
+use tui_input::Input;
+use tui_input::backend::crossterm::EventHandler;
 
 // ── Modal state ───────────────────────────────────────────────────────────────
 
@@ -30,8 +32,8 @@ pub enum ModalKind {
 #[derive(Debug, Clone)]
 pub struct Modal {
     pub kind: ModalKind,
-    /// Input field values in order: see ModalKind for semantics.
-    pub fields: Vec<String>,
+    /// Input fields in order: see ModalKind for semantics.
+    pub fields: Vec<Input>,
     /// Index of the focused field.
     pub focused: usize,
     /// Error message shown at the bottom of the modal.
@@ -42,7 +44,11 @@ impl Modal {
     fn new_add_quest(game_id: &str) -> Self {
         Self {
             kind: ModalKind::AddQuest,
-            fields: vec![game_id.to_string(), String::new(), "daily".to_string()],
+            fields: vec![
+                Input::from(game_id),
+                Input::default(),
+                Input::from("daily"),
+            ],
             focused: if game_id.is_empty() { 0 } else { 1 },
             error: None,
         }
@@ -53,7 +59,7 @@ impl Modal {
             kind: ModalKind::EditQuest {
                 original_name: name.to_string(),
             },
-            fields: vec![name.to_string(), reset.to_string()],
+            fields: vec![Input::from(name), Input::from(reset)],
             focused: 0,
             error: None,
         }
@@ -74,7 +80,7 @@ impl Modal {
     fn new_add_game() -> Self {
         Self {
             kind: ModalKind::AddGame,
-            fields: vec![String::new(), String::new()],
+            fields: vec![Input::default(), Input::default()],
             focused: 0,
             error: None,
         }
@@ -247,7 +253,7 @@ impl App {
                 .quests
                 .iter()
                 .find(|q| q.game_id == game_id && q.name == quest_name)
-                .map(|q| q.reset_schedule_label())
+                .map(|q| q.reset_edit_value())
                 .unwrap_or_default();
             let quest_name = quest_name.to_string();
             self.modal = Some(Modal::new_edit_quest(&quest_name, &reset));
@@ -286,9 +292,9 @@ impl App {
 
         let result = match &modal.kind {
             ModalKind::AddQuest => {
-                let game_id = modal.fields[0].trim().to_string();
-                let name = modal.fields[1].trim().to_string();
-                let reset = modal.fields[2].trim().to_string();
+                let game_id = modal.fields[0].value().trim().to_string();
+                let name = modal.fields[1].value().trim().to_string();
+                let reset = modal.fields[2].value().trim().to_string();
                 if game_id.is_empty() {
                     self.modal = Some(Modal {
                         error: Some("Game ID cannot be empty.".into()),
@@ -311,8 +317,8 @@ impl App {
                 .map(|_| format!("Added quest '{name}'."))
             }
             ModalKind::EditQuest { original_name } => {
-                let new_name = modal.fields[0].trim().to_string();
-                let reset = modal.fields[1].trim().to_string();
+                let new_name = modal.fields[0].value().trim().to_string();
+                let reset = modal.fields[1].value().trim().to_string();
                 if new_name.is_empty() {
                     self.modal = Some(Modal {
                         error: Some("Quest name cannot be empty.".into()),
@@ -342,8 +348,8 @@ impl App {
                     .map(|_| format!("Deleted quest '{name}'."))
             }
             ModalKind::AddGame => {
-                let id = modal.fields[0].trim().to_string();
-                let name = modal.fields[1].trim().to_string();
+                let id = modal.fields[0].value().trim().to_string();
+                let name = modal.fields[1].value().trim().to_string();
                 if id.is_empty() || name.is_empty() {
                     self.modal = Some(Modal {
                         error: Some("Game ID and name cannot be empty.".into()),
@@ -397,8 +403,13 @@ pub fn run(quests: Vec<Quest>, state: AppState, config: &RawConfig, tz: Tz) -> R
             ui::draw(f, &app, tz);
         })?;
 
-        if event::poll(Duration::from_millis(250))?
-            && let Event::Key(key) = event::read()?
+        if !event::poll(Duration::from_millis(250))? {
+            continue;
+        }
+
+        let event = event::read()?;
+        let Event::Key(key) = &event else { continue };
+
         {
             // ── modal input ──────────────────────────────────────────────
             if let Some(ref mut modal) = app.modal {
@@ -407,8 +418,6 @@ pub fn run(quests: Vec<Quest>, state: AppState, config: &RawConfig, tz: Tz) -> R
                         app.modal = None;
                     }
                     KeyCode::Enter => {
-                        // On confirmation modals (no fields) Enter confirms.
-                        // On form modals, Tab moves to next field; Enter on last field submits.
                         if modal.field_count() == 0 {
                             app.submit_modal();
                         } else if modal.focused + 1 < modal.field_count() {
@@ -424,89 +433,73 @@ pub fn run(quests: Vec<Quest>, state: AppState, config: &RawConfig, tz: Tz) -> R
                         let n = modal.field_count();
                         modal.focused = (modal.focused + n - 1) % n;
                     }
-                    KeyCode::Backspace => {
+                    _ => {
                         if let Some(field) = modal.fields.get_mut(modal.focused) {
-                            field.pop();
+                            field.handle_event(&event);
                             modal.error = None;
                         }
                     }
-                    KeyCode::Char(c) => {
-                        // Ctrl-U clears the current field.
-                        if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'u' {
-                            if let Some(field) = modal.fields.get_mut(modal.focused) {
-                                field.clear();
-                                modal.error = None;
-                            }
-                        } else if !key.modifiers.contains(KeyModifiers::CONTROL)
-                            && !key.modifiers.contains(KeyModifiers::ALT)
-                            && let Some(field) = modal.fields.get_mut(modal.focused)
-                        {
-                            field.push(c);
-                            modal.error = None;
-                        }
-                    }
-                    _ => {}
                 }
                 continue;
             }
+        }
 
-            // ── normal input ─────────────────────────────────────────────
-            if app.show_help {
-                app.show_help = false;
-                continue;
-            }
+        // ── normal input ─────────────────────────────────────────────
+        if app.show_help {
+            app.show_help = false;
+            continue;
+        }
 
-            match key.code {
-                KeyCode::Char('q') => break,
-                KeyCode::Char('?') => app.show_help = true,
-                KeyCode::Char('s') => app.sort_done_last = !app.sort_done_last,
-                KeyCode::Char('g') if app.selected_tab == 0 => {
-                    app.group_by_game = !app.group_by_game;
-                }
-                KeyCode::Tab => {
-                    app.selected_tab = (app.selected_tab + 1) % app.tab_count();
-                    app.selected_quest = 0;
-                }
-                KeyCode::BackTab => {
-                    let n = app.tab_count();
-                    app.selected_tab = (app.selected_tab + n - 1) % n;
-                    app.selected_quest = 0;
-                }
-                KeyCode::Up | KeyCode::Char('k') if app.selected_quest > 0 => {
-                    app.selected_quest -= 1;
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    let len = app.visible_quests().len();
-                    if len > 0 && app.selected_quest < len - 1 {
-                        app.selected_quest += 1;
-                    }
-                }
-                KeyCode::Char(' ') | KeyCode::Enter => {
-                    app.mark_selected_complete();
-                    app.status_msg = None;
-                }
-                KeyCode::Char('u') => {
-                    app.mark_selected_incomplete();
-                    app.status_msg = None;
-                }
-                // ── CRUD ─────────────────────────────────────────────────
-                KeyCode::Char('a') => {
-                    app.open_add_quest_modal();
-                }
-                KeyCode::Char('e') => {
-                    app.open_edit_quest_modal();
-                }
-                KeyCode::Char('d') => {
-                    app.open_delete_quest_modal();
-                }
-                KeyCode::Char('A') => {
-                    app.open_add_game_modal();
-                }
-                KeyCode::Char('D') => {
-                    app.open_delete_game_modal();
-                }
-                _ => {}
+        match key.code {
+            KeyCode::Char('q') => break,
+            KeyCode::Char('?') => app.show_help = true,
+            KeyCode::Char('s') => app.sort_done_last = !app.sort_done_last,
+            KeyCode::Char('g') if app.selected_tab == 0 => {
+                app.group_by_game = !app.group_by_game;
             }
+            KeyCode::Tab => {
+                app.selected_tab = (app.selected_tab + 1) % app.tab_count();
+                app.selected_quest = 0;
+            }
+            KeyCode::BackTab => {
+                let n = app.tab_count();
+                app.selected_tab = (app.selected_tab + n - 1) % n;
+                app.selected_quest = 0;
+            }
+            KeyCode::Up | KeyCode::Char('k') if app.selected_quest > 0 => {
+                app.selected_quest -= 1;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                let len = app.visible_quests().len();
+                if len > 0 && app.selected_quest < len - 1 {
+                    app.selected_quest += 1;
+                }
+            }
+            KeyCode::Char(' ') | KeyCode::Enter => {
+                app.mark_selected_complete();
+                app.status_msg = None;
+            }
+            KeyCode::Char('u') => {
+                app.mark_selected_incomplete();
+                app.status_msg = None;
+            }
+            // ── CRUD ─────────────────────────────────────────────────
+            KeyCode::Char('a') => {
+                app.open_add_quest_modal();
+            }
+            KeyCode::Char('e') => {
+                app.open_edit_quest_modal();
+            }
+            KeyCode::Char('d') => {
+                app.open_delete_quest_modal();
+            }
+            KeyCode::Char('A') => {
+                app.open_add_game_modal();
+            }
+            KeyCode::Char('D') => {
+                app.open_delete_game_modal();
+            }
+            _ => {}
         }
     }
 

@@ -30,6 +30,7 @@ pub struct Quest {
     pub game_name: String,
     pub name: String,
     pub rules: Vec<ResetRule>,
+    pub reset_spec: ResetSpec,
 }
 
 /// Sort key for reset interval length: schedule < interval < daily < weekly
@@ -147,6 +148,50 @@ impl Quest {
                 .join(", ")
         }
     }
+
+    /// Value to prefill in the reset field of the edit modal.
+    ///
+    /// For shorthands this is the bare string (`"daily"` / `"weekly"`).
+    /// For structured specs this is an inline TOML table or array literal
+    /// that `config_edit::parse_reset_value` can round-trip.
+    pub fn reset_edit_value(&self) -> String {
+        match &self.reset_spec {
+            ResetSpec::Shorthand(s) => s.clone(),
+            ResetSpec::Single(raw) => raw_to_inline(raw),
+            ResetSpec::Multiple(raws) => {
+                let items: Vec<String> = raws.iter().map(raw_to_inline).collect();
+                format!("[{}]", items.join(", "))
+            }
+        }
+    }
+}
+
+/// Serialize a `ResetRuleRaw` back to an inline TOML table string, e.g.
+/// `{ type = "interval", hours = 4 }`.
+fn raw_to_inline(raw: &ResetRuleRaw) -> String {
+    let mut parts = vec![format!("type = \"{}\"", raw.kind)];
+    if let Some(ref t) = raw.time {
+        parts.push(format!("time = \"{}\"", t));
+    }
+    if let Some(ref d) = raw.day {
+        parts.push(format!("day = \"{}\"", d));
+    }
+    if let Some(v) = raw.minutes {
+        parts.push(format!("minutes = {}", v));
+    }
+    if let Some(v) = raw.hours {
+        parts.push(format!("hours = {}", v));
+    }
+    if let Some(v) = raw.days {
+        parts.push(format!("days = {}", v));
+    }
+    if let Some(v) = raw.weeks {
+        parts.push(format!("weeks = {}", v));
+    }
+    if let Some(ref a) = raw.anchor {
+        parts.push(format!("anchor = \"{}\"", a));
+    }
+    format!("{{ {} }}", parts.join(", "))
 }
 
 fn rule_label(rule: &ResetRule) -> String {
@@ -386,6 +431,7 @@ pub fn build_quests(config: &RawConfig) -> Result<Vec<Quest>> {
                 game_name: game.name.clone(),
                 name: quest_cfg.name.clone(),
                 rules,
+                reset_spec: quest_cfg.reset.clone(),
             });
         }
     }
