@@ -7,7 +7,8 @@
 use anyhow::{Context, Result, bail};
 use toml_edit::{Array, DocumentMut, Item, Table, value};
 
-use crate::config::config_path;
+use crate::config::{ResetSpec, config_path};
+use crate::quest;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -301,7 +302,8 @@ pub fn remove_quest(game_id: &str, quest_name: &str) -> Result<()> {
 // ── reset value parsing ───────────────────────────────────────────────────────
 
 /// Accept either a bare shorthand (`daily`, `weekly`) or an inline TOML table
-/// literal such as `{ type = "interval", hours = 4 }`.
+/// literal such as `{ type = "interval", hours = 4 }`.  Validates both TOML
+/// syntax and semantic correctness (time format, type name, duration fields, …).
 fn parse_reset_value(s: &str) -> Result<toml_edit::Value> {
     let trimmed = s.trim();
     // Shorthands are plain strings.
@@ -311,11 +313,39 @@ fn parse_reset_value(s: &str) -> Result<toml_edit::Value> {
     // Try parsing as an inline table wrapped in a synthetic key assignment so
     // toml_edit can handle it.
     let synthetic = format!("x = {}", trimmed);
-    let parsed: DocumentMut = synthetic
-        .parse()
-        .with_context(|| format!("invalid reset spec '{}' — expected a shorthand (\"daily\", \"weekly\") or an inline TOML table like {{ type = \"interval\", hours = 4 }}", s))?;
-    parsed["x"]
+    let parsed: DocumentMut = synthetic.parse().map_err(|e| {
+        anyhow::anyhow!(
+            "invalid reset spec — expected \"daily\", \"weekly\", or an inline TOML table\n{}",
+            e
+        )
+    })?;
+    let value = parsed["x"]
         .as_value()
         .cloned()
-        .context("reset spec parsed but produced no value")
+        .context("reset spec parsed but produced no value")?;
+
+    // ── semantic validation ───────────────────────────────────────────────────
+    // Round-trip through `toml` serde to get a typed `ResetSpec`, then run the
+    // same logic used at config-load time to catch bad field values.
+    let spec = toml_value_to_reset_spec(&value)?;
+    quest::validate_reset_spec(&spec)?;
+
+    Ok(value)
+}
+
+/// Convert a `toml_edit::Value` to a `ResetSpec` by serialising it as a TOML
+/// string and deserialising via serde.
+fn toml_value_to_reset_spec(value: &toml_edit::Value) -> Result<ResetSpec> {
+    // Build a synthetic document `reset = <value>` and parse the `reset` key.
+    let doc_str = format!("reset = {}", value);
+    let table: toml::Table = toml::from_str(&doc_str)
+        .context("failed to re-parse reset value for semantic validation")?;
+    let reset_val = table
+        .get("reset")
+        .cloned()
+        .context("reset key missing after re-parse")?;
+    let spec: ResetSpec = reset_val
+        .try_into()
+        .context("reset value does not match expected schema")?;
+    Ok(spec)
 }

@@ -403,9 +403,16 @@ fn draw_form_modal(f: &mut Frame, title: &str, labels: &[(&str, usize)], modal: 
     const WIDTH: u16 = 64;
 
     // Height: border(2) + per-field(label 1 + input 1 + gap 1 = 3) + hint(1) + bottom padding(1)
-    // + optional error(2)
+    // + optional error (blank 1 + wrapped lines)
     let has_err = modal.error.is_some();
-    let height = 2 + (labels.len() as u16) * 3 + 1 + 1 + if has_err { 2 } else { 0 };
+    // Inner width = popup width minus 2 border cols minus 2*2 horizontal padding.
+    let inner_width = WIDTH.saturating_sub(4);
+    let err_lines = modal
+        .error
+        .as_deref()
+        .map(|e| error_line_count(e, inner_width))
+        .unwrap_or(0);
+    let height = 2 + (labels.len() as u16) * 3 + 1 + 1 + if has_err { 1 + err_lines } else { 0 };
     let area = centered_rect(WIDTH, height, f.area());
 
     f.render_widget(Clear, area);
@@ -443,13 +450,16 @@ fn draw_form_modal(f: &mut Frame, title: &str, labels: &[(&str, usize)], modal: 
     row_constraints.push(Constraint::Length(1)); // hint
     if has_err {
         row_constraints.push(Constraint::Length(1)); // blank
-        row_constraints.push(Constraint::Length(1)); // error text
+        row_constraints.push(Constraint::Length(err_lines)); // error text (possibly multi-line)
     }
 
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints(row_constraints)
         .split(inner);
+
+    // Track the rect of the reset input row and cursor column for popup positioning.
+    let mut reset_input_rect: Option<(Rect, u16)> = None;
 
     for (i, (label, field_idx)) in labels.iter().enumerate() {
         let base = i * 3;
@@ -483,6 +493,10 @@ fn draw_form_modal(f: &mut Frame, title: &str, labels: &[(&str, usize)], modal: 
             let cursor_col = input
                 .map(|i| i.visual_cursor().max(scroll) - scroll)
                 .unwrap_or(0);
+
+            if modal.reset_field_index() == Some(*field_idx) {
+                reset_input_rect = Some((box_rect, 1 + cursor_col as u16));
+            }
 
             let text_rect = Rect {
                 x: box_rect.x + 1,
@@ -524,7 +538,14 @@ fn draw_form_modal(f: &mut Frame, title: &str, labels: &[(&str, usize)], modal: 
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" next field  ", Style::default().fg(Color::DarkGray)),
+        Span::styled(" accept  ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            "↑↓",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" navigate  ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             "Enter",
             Style::default()
@@ -547,12 +568,189 @@ fn draw_form_modal(f: &mut Frame, title: &str, labels: &[(&str, usize)], modal: 
         let err_idx = hint_idx + 2;
         if err_idx < rows.len() {
             f.render_widget(
-                Paragraph::new(Span::styled(
-                    err.as_str(),
-                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                )),
+                Paragraph::new(err.as_str())
+                    .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+                    .wrap(Wrap { trim: false }),
                 rows[err_idx],
             );
         }
     }
+
+    // ── completion popup ──────────────────────────────────────────────────────
+    if let Some((input_rect, cursor_col)) = reset_input_rect
+        && !modal.completion.is_empty()
+    {
+        draw_completion_popup(f, input_rect, cursor_col, modal);
+    }
+}
+
+// ── completion popup ──────────────────────────────────────────────────────────
+
+const COMPLETION_MAX_VISIBLE: usize = 6;
+
+fn draw_completion_popup(f: &mut Frame, anchor: Rect, cursor_col: u16, modal: &Modal) {
+    let completion = &modal.completion;
+    let selected = modal.completion_selected;
+    let n_candidates = completion.candidates.len();
+    let n_examples = completion.examples.len();
+
+    // Build a flat item list for rendering: (global_index, text, is_example).
+    // A separator row (None) is inserted between the two groups when both
+    // are non-empty.
+    enum Item<'a> {
+        Entry { idx: usize, text: &'a str, is_example: bool },
+        Separator,
+    }
+
+    let mut items: Vec<Item> = Vec::new();
+    for (i, s) in completion.candidates.iter().enumerate() {
+        items.push(Item::Entry { idx: i, text: s, is_example: false });
+    }
+    if n_candidates > 0 && n_examples > 0 {
+        items.push(Item::Separator);
+    }
+    for (i, s) in completion.examples.iter().enumerate() {
+        items.push(Item::Entry { idx: n_candidates + i, text: s, is_example: true });
+    }
+
+    // Total navigable items (no separator in the count).
+    let total = n_candidates + n_examples;
+    if total == 0 {
+        return;
+    }
+
+    // Scroll the visible window so `selected` stays in view.
+    // We account for the separator row by tracking render rows.
+    let scroll_offset = if selected >= COMPLETION_MAX_VISIBLE {
+        selected - COMPLETION_MAX_VISIBLE + 1
+    } else {
+        0
+    };
+
+    // Collect the visible slice, including the separator if it falls within the
+    // visible window.  The separator is shown only when at least one entry from
+    // each group is visible.
+    let visible: Vec<&Item> = {
+        let mut result = Vec::new();
+        let mut render_rows = 0usize;
+        let mut visible_candidates = 0usize;
+
+        for item in &items {
+            if render_rows >= COMPLETION_MAX_VISIBLE {
+                break;
+            }
+            match item {
+                Item::Entry { idx, is_example, .. } => {
+                    if *idx < scroll_offset {
+                        continue;
+                    }
+                    result.push(item);
+                    render_rows += 1;
+                    if !is_example {
+                        visible_candidates += 1;
+                    }
+                }
+                Item::Separator => {
+                    // Add separator only if candidates were visible above it.
+                    if visible_candidates > 0 && render_rows < COMPLETION_MAX_VISIBLE {
+                        result.push(item);
+                        render_rows += 1;
+                    }
+                }
+            }
+        }
+        result
+    };
+
+    // Width: widest visible entry text + 4 (padding + borders).
+    let content_width = visible
+        .iter()
+        .filter_map(|item| match item {
+            Item::Entry { text, .. } => Some(text.len()),
+            Item::Separator => None,
+        })
+        .max()
+        .unwrap_or(10)
+        .max(10) as u16;
+    let popup_width = (content_width + 4).min(anchor.width);
+    let popup_height = visible.len() as u16 + 2; // +2 for borders
+
+    // Position directly below the input row, aligned to the cursor column.
+    let screen = f.area();
+    let x = anchor.x + cursor_col;
+    let y = anchor.y + 1;
+
+    // Clamp to screen bounds.
+    let x = x.min(screen.width.saturating_sub(popup_width));
+    let y = if y + popup_height > screen.height {
+        anchor.y.saturating_sub(popup_height)
+    } else {
+        y
+    };
+
+    let popup_rect = Rect {
+        x,
+        y,
+        width: popup_width.min(screen.width.saturating_sub(x)),
+        height: popup_height.min(screen.height.saturating_sub(y)),
+    };
+
+    f.render_widget(Clear, popup_rect);
+
+    let inner_width = popup_width.saturating_sub(4) as usize; // inside borders+padding
+
+    let lines: Vec<Line> = visible
+        .iter()
+        .map(|item| match item {
+            Item::Entry { idx, text, is_example } => {
+                let is_selected = *idx == selected;
+                if is_selected {
+                    Line::from(Span::styled(
+                        *text,
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ))
+                } else if *is_example {
+                    Line::from(Span::styled(
+                        *text,
+                        Style::default().fg(Color::Gray),
+                    ))
+                } else {
+                    Line::from(Span::styled(*text, Style::default().fg(Color::White)))
+                }
+            }
+            Item::Separator => Line::from(Span::styled(
+                "─".repeat(inner_width),
+                Style::default().fg(Color::DarkGray),
+            )),
+        })
+        .collect();
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::DarkGray));
+
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .style(Style::default().bg(Color::DarkGray));
+
+    f.render_widget(paragraph, popup_rect);
+}
+
+/// Count the number of terminal rows an error string will occupy when wrapped
+/// to `width` columns.  Explicit `\n` characters are treated as hard line breaks.
+fn error_line_count(err: &str, width: u16) -> u16 {
+    let width = width.max(1) as usize;
+    let lines: u16 = err
+        .lines()
+        .map(|line| {
+            // A completely empty hard-break line still occupies one row.
+            let chars = line.chars().count();
+            ((chars.max(1)).div_ceil(width)) as u16
+        })
+        .sum();
+    lines.max(1)
 }

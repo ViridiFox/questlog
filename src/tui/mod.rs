@@ -1,3 +1,4 @@
+pub mod completion;
 pub mod ui;
 
 use crate::config::{RawConfig, load_config};
@@ -8,7 +9,7 @@ use anyhow::Result;
 use chrono::Utc;
 use chrono_tz::Tz;
 use crossterm::{
-    event::{self, Event, KeyCode},
+    event::{self, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -38,11 +39,103 @@ pub struct Modal {
     pub focused: usize,
     /// Error message shown at the bottom of the modal.
     pub error: Option<String>,
+    /// Active completion result. `completion.candidates` empty = popup hidden.
+    pub completion: completion::Completion,
+    /// Index of the highlighted completion item.
+    pub completion_selected: usize,
+}
+
+impl Modal {
+    /// Returns the field index of the reset rule input, if this modal has one.
+    pub fn reset_field_index(&self) -> Option<usize> {
+        match &self.kind {
+            ModalKind::AddQuest => Some(2),
+            ModalKind::EditQuest { .. } => Some(1),
+            _ => None,
+        }
+    }
+
+    /// True when the reset field is currently focused and the completion popup
+    /// should be active.
+    pub fn reset_field_focused(&self) -> bool {
+        self.reset_field_index() == Some(self.focused)
+    }
+
+    /// Recompute completion candidates from the current reset field value and
+    /// cursor position.
+    pub fn refresh_completions(&mut self) {
+        if let Some(idx) = self.reset_field_index()
+            && self.focused == idx
+        {
+            let field = &self.fields[idx];
+            let value = field.value();
+            let cursor = field.cursor(); // byte offset
+            self.completion = completion::reset_completions(value, cursor);
+            // Clamp selection in case the list shrank.
+            if self.completion_selected >= self.completion.total_len() {
+                self.completion_selected = 0;
+            }
+            return;
+        }
+        self.completion = completion::Completion::default();
+        self.completion_selected = 0;
+    }
+
+    /// Accept the currently highlighted completion item — splice the candidate
+    /// into the reset field at the stored replace range and refresh candidates.
+    pub fn accept_completion(&mut self) {
+        let selected = self.completion_selected;
+        let candidate = match self.completion.get(selected) {
+            Some(c) => c.to_string(),
+            None => return,
+        };
+        let idx = match self.reset_field_index() {
+            Some(i) => i,
+            None => return,
+        };
+
+        let old_value = self.fields[idx].value().to_string();
+        let (replace_start, replace_end) = self.completion.replace_range_for(selected);
+        let start = replace_start.min(old_value.len());
+        let end = replace_end.min(old_value.len());
+
+        // Build the new value by splicing the candidate in.
+        let new_value = if self.completion.in_quoted_value {
+            // The token lives inside `"…"`.  Keep the opening quote that is
+            // already in the field; the candidate itself is the bare value.
+            // Close the quote after the candidate only if the char at `end` is
+            // not already a `"`.
+            let after = &old_value[end..];
+            let close = if after.starts_with('"') { "" } else { "\"" };
+            format!("{}{}{}{}", &old_value[..start], candidate, close, after)
+        } else {
+            format!("{}{}{}", &old_value[..start], candidate, &old_value[end..])
+        };
+
+        let new_cursor = start + candidate.len() + if self.completion.in_quoted_value && !&old_value[end..].starts_with('"') { 1 } else { 0 };
+        // Build an Input positioned at the new cursor.
+        let mut new_input = Input::from(new_value.as_str());
+        // Advance cursor to the right position.  tui_input::Input starts at 0;
+        // handle_event isn't suitable here — set via repeated End/char moves
+        // would be fragile.  Instead move to end then back.
+        // Simplest: rebuild from (value, cursor) using the move_to_end trick.
+        let chars_to_end = new_value[new_cursor..].chars().count();
+        let total_chars = new_value.chars().count();
+        let cursor_char = total_chars - chars_to_end;
+        // Move to start then forward cursor_char times.
+        use crossterm::event::{KeyCode as KC, KeyEvent, KeyModifiers as KM};
+        new_input.handle_event(&crossterm::event::Event::Key(KeyEvent::new(KC::Home, KM::NONE)));
+        for _ in 0..cursor_char {
+            new_input.handle_event(&crossterm::event::Event::Key(KeyEvent::new(KC::Right, KM::NONE)));
+        }
+        self.fields[idx] = new_input;
+        self.refresh_completions();
+    }
 }
 
 impl Modal {
     fn new_add_quest(game_id: &str) -> Self {
-        Self {
+        let mut m = Self {
             kind: ModalKind::AddQuest,
             fields: vec![
                 Input::from(game_id),
@@ -51,18 +144,26 @@ impl Modal {
             ],
             focused: if game_id.is_empty() { 0 } else { 1 },
             error: None,
-        }
+            completion: completion::Completion::default(),
+            completion_selected: 0,
+        };
+        m.refresh_completions();
+        m
     }
 
     fn new_edit_quest(name: &str, reset: &str) -> Self {
-        Self {
+        let mut m = Self {
             kind: ModalKind::EditQuest {
                 original_name: name.to_string(),
             },
             fields: vec![Input::from(name), Input::from(reset)],
             focused: 0,
             error: None,
-        }
+            completion: completion::Completion::default(),
+            completion_selected: 0,
+        };
+        m.refresh_completions();
+        m
     }
 
     fn new_delete_quest(name: &str, game_id: &str) -> Self {
@@ -74,6 +175,8 @@ impl Modal {
             fields: vec![],
             focused: 0,
             error: None,
+            completion: completion::Completion::default(),
+            completion_selected: 0,
         }
     }
 
@@ -83,6 +186,8 @@ impl Modal {
             fields: vec![Input::default(), Input::default()],
             focused: 0,
             error: None,
+            completion: completion::Completion::default(),
+            completion_selected: 0,
         }
     }
 
@@ -95,6 +200,8 @@ impl Modal {
             fields: vec![],
             focused: 0,
             error: None,
+            completion: completion::Completion::default(),
+            completion_selected: 0,
         }
     }
 
@@ -415,28 +522,70 @@ pub fn run(quests: Vec<Quest>, state: AppState, config: &RawConfig, tz: Tz) -> R
             if let Some(ref mut modal) = app.modal {
                 match key.code {
                     KeyCode::Esc => {
-                        app.modal = None;
-                    }
-                    KeyCode::Enter => {
-                        if modal.field_count() == 0 {
-                            app.submit_modal();
-                        } else if modal.focused + 1 < modal.field_count() {
-                            modal.focused += 1;
+                        if !modal.completion.is_empty() {
+                            // First Esc dismisses the completion popup only.
+                            modal.completion = completion::Completion::default();
+                            modal.completion_selected = 0;
                         } else {
-                            app.submit_modal();
+                            app.modal = None;
                         }
                     }
+                    KeyCode::Down if modal.reset_field_focused() && !modal.completion.is_empty() => {
+                        let len = modal.completion.total_len();
+                        modal.completion_selected = (modal.completion_selected + 1) % len;
+                    }
+                    KeyCode::Up if modal.reset_field_focused() && !modal.completion.is_empty() => {
+                        let len = modal.completion.total_len();
+                        modal.completion_selected =
+                            (modal.completion_selected + len - 1) % len;
+                    }
+                    // Tab on reset field with popup: accept completion instead of advancing field.
+                    KeyCode::Tab
+                        if modal.reset_field_focused()
+                            && !modal.completion.is_empty() =>
+                    {
+                        modal.accept_completion();
+                    }
+                    // Tab without popup: advance field as usual.
                     KeyCode::Tab if modal.field_count() > 0 => {
                         modal.focused = (modal.focused + 1) % modal.field_count();
+                        modal.refresh_completions();
                     }
                     KeyCode::BackTab if modal.field_count() > 0 => {
                         let n = modal.field_count();
                         modal.focused = (modal.focused + n - 1) % n;
+                        modal.refresh_completions();
+                    }
+                    KeyCode::Enter => {
+                        if modal.field_count() == 0 {
+                            app.submit_modal();
+                        } else if modal.reset_field_focused()
+                            && !modal.completion.is_empty()
+                        {
+                            // Enter on reset field with popup: accept completion.
+                            modal.accept_completion();
+                        } else if modal.focused + 1 < modal.field_count() {
+                            modal.focused += 1;
+                            modal.refresh_completions();
+                        } else {
+                            app.submit_modal();
+                        }
+                    }
+                    // Ctrl-U: clear the focused field.
+                    KeyCode::Char('u')
+                        if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    {
+                        if let Some(field) = modal.fields.get_mut(modal.focused) {
+                            *field = Input::default();
+                            modal.error = None;
+                            modal.refresh_completions();
+                        }
                     }
                     _ => {
                         if let Some(field) = modal.fields.get_mut(modal.focused) {
                             field.handle_event(&event);
                             modal.error = None;
+                            modal.refresh_completions();
                         }
                     }
                 }

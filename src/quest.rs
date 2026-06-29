@@ -498,3 +498,140 @@ pub fn sort_quests(quests: &mut [Quest]) {
             .then_with(|| a.name.cmp(&b.name))
     });
 }
+
+/// Validate a `ResetSpec` using hardcoded placeholder defaults.  Catches
+/// semantic errors (bad time format, unknown type, zero-duration interval, …)
+/// before the spec is written to the config file.
+pub fn validate_reset_spec(spec: &ResetSpec) -> Result<()> {
+    // Use hardcoded stand-ins for defaults — we're validating the spec's
+    // own fields, not game-level defaults.
+    let default_time = "00:00";
+    let default_day = "monday";
+    let default_tz = "UTC";
+    match spec {
+        ResetSpec::Shorthand(s) => match s.as_str() {
+            "daily" | "weekly" => Ok(()),
+            other => bail!("unknown reset shorthand '{}'", other),
+        },
+        ResetSpec::Single(raw) => {
+            rule_from_raw(raw, default_time, default_day, default_tz)?;
+            Ok(())
+        }
+        ResetSpec::Multiple(raws) => {
+            if raws.is_empty() {
+                bail!("multi-rule reset spec must contain at least one rule");
+            }
+            for raw in raws {
+                rule_from_raw(raw, default_time, default_day, default_tz)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ResetRuleRaw;
+
+    fn raw(kind: &str) -> ResetRuleRaw {
+        ResetRuleRaw {
+            kind: kind.to_string(),
+            time: None,
+            day: None,
+            minutes: None,
+            hours: None,
+            days: None,
+            weeks: None,
+            anchor: None,
+        }
+    }
+
+    #[test]
+    fn shorthand_daily_weekly_valid() {
+        assert!(validate_reset_spec(&ResetSpec::Shorthand("daily".to_string())).is_ok());
+        assert!(validate_reset_spec(&ResetSpec::Shorthand("weekly".to_string())).is_ok());
+    }
+
+    #[test]
+    fn shorthand_unknown_is_error() {
+        let err = validate_reset_spec(&ResetSpec::Shorthand("monthly".to_string()));
+        assert!(err.is_err());
+        assert!(err.unwrap_err().to_string().contains("unknown reset shorthand"));
+    }
+
+    #[test]
+    fn daily_with_valid_time() {
+        let mut r = raw("daily");
+        r.time = Some("08:30".to_string());
+        assert!(validate_reset_spec(&ResetSpec::Single(r)).is_ok());
+    }
+
+    #[test]
+    fn daily_with_invalid_time() {
+        let mut r = raw("daily");
+        r.time = Some("25:99".to_string());
+        let err = validate_reset_spec(&ResetSpec::Single(r));
+        assert!(err.is_err());
+        assert!(err.unwrap_err().to_string().contains("invalid time"));
+    }
+
+    #[test]
+    fn weekly_with_invalid_day() {
+        let mut r = raw("weekly");
+        r.day = Some("funday".to_string());
+        let err = validate_reset_spec(&ResetSpec::Single(r));
+        assert!(err.is_err());
+        assert!(err.unwrap_err().to_string().contains("unknown weekday"));
+    }
+
+    #[test]
+    fn interval_zero_duration_is_error() {
+        let r = raw("interval"); // no duration fields → total = 0
+        let err = validate_reset_spec(&ResetSpec::Single(r));
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn interval_with_hours_valid() {
+        let mut r = raw("interval");
+        r.hours = Some(4);
+        assert!(validate_reset_spec(&ResetSpec::Single(r)).is_ok());
+    }
+
+    #[test]
+    fn unknown_type_is_error() {
+        let r = raw("monthly");
+        let err = validate_reset_spec(&ResetSpec::Single(r));
+        assert!(err.is_err());
+        assert!(err.unwrap_err().to_string().contains("unknown reset type"));
+    }
+
+    #[test]
+    fn schedule_with_invalid_anchor() {
+        let mut r = raw("schedule");
+        r.hours = Some(2);
+        r.anchor = Some("not-a-date".to_string());
+        let err = validate_reset_spec(&ResetSpec::Single(r));
+        assert!(err.is_err());
+        assert!(err.unwrap_err().to_string().contains("invalid anchor timestamp"));
+    }
+
+    #[test]
+    fn multiple_rules_all_valid() {
+        let mut r1 = raw("daily");
+        r1.time = Some("08:00".to_string());
+        let mut r2 = raw("weekly");
+        r2.day = Some("friday".to_string());
+        assert!(validate_reset_spec(&ResetSpec::Multiple(vec![r1, r2])).is_ok());
+    }
+
+    #[test]
+    fn multiple_rules_one_invalid_fails() {
+        let r1 = raw("daily");
+        let mut r2 = raw("interval"); // zero duration
+        r2.hours = None;
+        let err = validate_reset_spec(&ResetSpec::Multiple(vec![r1, r2]));
+        assert!(err.is_err());
+    }
+}
