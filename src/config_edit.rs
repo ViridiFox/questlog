@@ -363,7 +363,10 @@ pub fn toggle_quest_disabled(game_id: &str, quest_name: &str) -> Result<bool> {
                     }
                 }
                 if new_val {
-                    qt.insert("disabled", toml_edit::Value::Boolean(toml_edit::Formatted::new(true)));
+                    qt.insert(
+                        "disabled",
+                        toml_edit::Value::Boolean(toml_edit::Formatted::new(true)),
+                    );
                 }
                 arr.replace(idx, toml_edit::Value::InlineTable(qt));
             }
@@ -373,7 +376,6 @@ pub fn toggle_quest_disabled(game_id: &str, quest_name: &str) -> Result<bool> {
     write_doc(&doc)?;
     Ok(new_val)
 }
-
 
 /// Accept either a bare shorthand (`daily`, `weekly`) or an inline TOML table
 /// literal such as `{ type = "interval", hours = 4 }`.  Validates both TOML

@@ -232,7 +232,10 @@ fn main() -> Result<()> {
             }
         }
         Some(Command::Done { name, game }) => {
-            let Some(found) = quests.iter_mut().find(|q| q.game_id == game && q.name == name) else {
+            let Some(found) = quests
+                .iter_mut()
+                .find(|q| q.game_id == game && q.name == name)
+            else {
                 anyhow::bail!("quest '{}' not found in game '{}'", name, game);
             };
             found.mark_complete(Utc::now());

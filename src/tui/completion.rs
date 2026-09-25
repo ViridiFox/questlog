@@ -68,7 +68,9 @@ impl Completion {
         if index < self.candidates.len() {
             self.candidates.get(index).map(String::as_str)
         } else {
-            self.examples.get(index - self.candidates.len()).map(String::as_str)
+            self.examples
+                .get(index - self.candidates.len())
+                .map(String::as_str)
         }
     }
 
@@ -266,7 +268,11 @@ fn table_completions_at(input: &str, cursor: usize) -> Completion {
     let ctx = cursor_context(before);
 
     match ctx {
-        CursorCtx::InQuotedValue { key, value_start, value_prefix } => {
+        CursorCtx::InQuotedValue {
+            key,
+            value_start,
+            value_prefix,
+        } => {
             // We're inside a quoted value.  Offer valid values for that key.
             let (candidates, hint) = value_candidates(&key, &value_prefix);
             let examples = hint
@@ -284,7 +290,10 @@ fn table_completions_at(input: &str, cursor: usize) -> Completion {
             }
         }
 
-        CursorCtx::InKeyName { key_start, key_prefix } => {
+        CursorCtx::InKeyName {
+            key_start,
+            key_prefix,
+        } => {
             // We're typing a key name.  Offer missing keys valid for the
             // current rule type.
             let candidates = key_candidates(rule_type.as_deref(), &existing_keys, &key_prefix);
@@ -452,7 +461,11 @@ fn cursor_context(before: &str) -> CursorCtx {
     // an identifier that hasn't been followed by `=` yet.
     let after_sep = after_last_separator(before);
     let trimmed = after_sep.trim_start();
-    if !trimmed.is_empty() && trimmed.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+    if !trimmed.is_empty()
+        && trimmed
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
         let key_start = before.len() - after_sep.len() + (after_sep.len() - trimmed.len());
         return CursorCtx::InKeyName {
             key_start,
@@ -481,10 +494,7 @@ fn last_open_quote_pos(s: &str) -> Option<usize> {
 
 /// Return the slice of `before` that follows the last `{` or `,`.
 fn after_last_separator(before: &str) -> &str {
-    let sep = before
-        .rfind(['{', ','])
-        .map(|i| i + 1)
-        .unwrap_or(0);
+    let sep = before.rfind(['{', ',']).map(|i| i + 1).unwrap_or(0);
     &before[sep..]
 }
 
@@ -529,7 +539,13 @@ fn value_candidates(key: &str, prefix: &str) -> (Vec<String>, Option<&'static st
         }
         "day" => {
             let all = &[
-                "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+                "monday",
+                "tuesday",
+                "wednesday",
+                "thursday",
+                "friday",
+                "saturday",
+                "sunday",
             ];
             let candidates = all
                 .iter()
@@ -667,7 +683,10 @@ mod tests {
         let input = r#"{ type = "" }"#;
         let cursor = input.find("\"\"").unwrap() + 1; // inside empty quotes
         let c = reset_completions(input, cursor);
-        assert_eq!(c.candidates, vec!["daily", "weekly", "interval", "schedule"]);
+        assert_eq!(
+            c.candidates,
+            vec!["daily", "weekly", "interval", "schedule"]
+        );
         assert!(c.in_quoted_value);
     }
 
@@ -772,7 +791,11 @@ mod tests {
         // Should complete `t` as a key name — `time` is missing for daily.
         assert!(c.candidates.contains(&"time".to_string()));
         // Should NOT be an array template.
-        assert!(!c.candidates.iter().any(|s| s.starts_with('[') && s.contains('}') ));
+        assert!(
+            !c.candidates
+                .iter()
+                .any(|s| s.starts_with('[') && s.contains('}'))
+        );
     }
 
     #[test]

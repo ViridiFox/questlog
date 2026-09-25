@@ -1,4 +1,7 @@
-use crate::{config::{GameConfig, QuestConfig, RawConfig, ResetRuleRaw, ResetSpec}, state::QuestState};
+use crate::{
+    config::{GameConfig, QuestConfig, RawConfig, ResetRuleRaw, ResetSpec},
+    state::QuestState,
+};
 use anyhow::{Result, bail};
 use chrono::{DateTime, Datelike, Duration, NaiveTime, TimeZone, Utc, Weekday};
 use chrono_tz::Tz;
@@ -182,7 +185,9 @@ impl Quest {
 
     /// Convert to state struct
     pub fn as_state(&self) -> QuestState {
-        QuestState { last_completed: self.last_completed }
+        QuestState {
+            last_completed: self.last_completed,
+        }
     }
 }
 
@@ -453,7 +458,7 @@ pub fn build_quests(config: &RawConfig) -> Result<Vec<Quest>> {
                 rules,
                 reset_spec: quest_cfg.reset.clone(),
                 disabled: quest_cfg.disabled,
-                last_completed: None
+                last_completed: None,
             });
         }
     }
@@ -580,7 +585,11 @@ mod tests {
     fn shorthand_unknown_is_error() {
         let err = validate_reset_spec(&ResetSpec::Shorthand("monthly".to_string()));
         assert!(err.is_err());
-        assert!(err.unwrap_err().to_string().contains("unknown reset shorthand"));
+        assert!(
+            err.unwrap_err()
+                .to_string()
+                .contains("unknown reset shorthand")
+        );
     }
 
     #[test]
@@ -637,7 +646,11 @@ mod tests {
         r.anchor = Some("not-a-date".to_string());
         let err = validate_reset_spec(&ResetSpec::Single(r));
         assert!(err.is_err());
-        assert!(err.unwrap_err().to_string().contains("invalid anchor timestamp"));
+        assert!(
+            err.unwrap_err()
+                .to_string()
+                .contains("invalid anchor timestamp")
+        );
     }
 
     #[test]

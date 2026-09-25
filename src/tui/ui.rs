@@ -56,14 +56,7 @@ pub fn draw(f: &mut Frame, app: &App, tz: Tz) {
     let now = Utc::now();
 
     if app.selected_tab == 0 && app.group_by_game {
-        draw_grouped(
-            f,
-            chunks[1],
-            &visible_quests,
-            now,
-            app.sort_done_last,
-            tz,
-        );
+        draw_grouped(f, chunks[1], &visible_quests, now, app.sort_done_last, tz);
     } else {
         draw_list(
             f,
@@ -516,10 +509,7 @@ fn draw_form_modal(f: &mut Frame, title: &str, labels: &[(&str, usize)], modal: 
                     .scroll((0, scroll as u16)),
                 text_rect,
             );
-            f.set_cursor_position(Position::new(
-                text_rect.x + cursor_col as u16,
-                box_rect.y,
-            ));
+            f.set_cursor_position(Position::new(text_rect.x + cursor_col as u16, box_rect.y));
         } else {
             let value = modal
                 .fields
@@ -605,19 +595,31 @@ fn draw_completion_popup(f: &mut Frame, anchor: Rect, cursor_col: u16, modal: &M
     // A separator row (None) is inserted between the two groups when both
     // are non-empty.
     enum Item<'a> {
-        Entry { idx: usize, text: &'a str, is_example: bool },
+        Entry {
+            idx: usize,
+            text: &'a str,
+            is_example: bool,
+        },
         Separator,
     }
 
     let mut items: Vec<Item> = Vec::new();
     for (i, s) in completion.candidates.iter().enumerate() {
-        items.push(Item::Entry { idx: i, text: s, is_example: false });
+        items.push(Item::Entry {
+            idx: i,
+            text: s,
+            is_example: false,
+        });
     }
     if n_candidates > 0 && n_examples > 0 {
         items.push(Item::Separator);
     }
     for (i, s) in completion.examples.iter().enumerate() {
-        items.push(Item::Entry { idx: n_candidates + i, text: s, is_example: true });
+        items.push(Item::Entry {
+            idx: n_candidates + i,
+            text: s,
+            is_example: true,
+        });
     }
 
     // Total navigable items (no separator in the count).
@@ -647,7 +649,9 @@ fn draw_completion_popup(f: &mut Frame, anchor: Rect, cursor_col: u16, modal: &M
                 break;
             }
             match item {
-                Item::Entry { idx, is_example, .. } => {
+                Item::Entry {
+                    idx, is_example, ..
+                } => {
                     if *idx < scroll_offset {
                         continue;
                     }
@@ -709,7 +713,11 @@ fn draw_completion_popup(f: &mut Frame, anchor: Rect, cursor_col: u16, modal: &M
     let lines: Vec<Line> = visible
         .iter()
         .map(|item| match item {
-            Item::Entry { idx, text, is_example } => {
+            Item::Entry {
+                idx,
+                text,
+                is_example,
+            } => {
                 let is_selected = *idx == selected;
                 if is_selected {
                     Line::from(Span::styled(
@@ -720,10 +728,7 @@ fn draw_completion_popup(f: &mut Frame, anchor: Rect, cursor_col: u16, modal: &M
                             .add_modifier(Modifier::BOLD),
                     ))
                 } else if *is_example {
-                    Line::from(Span::styled(
-                        *text,
-                        Style::default().fg(Color::Gray),
-                    ))
+                    Line::from(Span::styled(*text, Style::default().fg(Color::Gray)))
                 } else {
                     Line::from(Span::styled(*text, Style::default().fg(Color::White)))
                 }

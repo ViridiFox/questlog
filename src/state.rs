@@ -52,9 +52,13 @@ pub fn save_state(quests: &[Quest]) -> Result<()> {
             .with_context(|| format!("failed to create state dir {}", parent.display()))?;
     }
 
-    let state = quests.iter().map(|q| (AppState::key(q), q.as_state())).collect();
+    let state = quests
+        .iter()
+        .map(|q| (AppState::key(q), q.as_state()))
+        .collect();
 
-    let contents = serde_json::to_string_pretty(&AppState(state)).context("failed to serialize state")?;
+    let contents =
+        serde_json::to_string_pretty(&AppState(state)).context("failed to serialize state")?;
     std::fs::write(&path, contents)
         .with_context(|| format!("failed to write state to {}", path.display()))?;
     Ok(())
