@@ -317,6 +317,24 @@ impl App {
                 (q.game_id.clone(), q.name.clone())
             };
             f(&mut self.state, &game_id, &name);
+
+    fn toggle_selected_disabled(&mut self) {
+        if let Some(quest) = self.selected_quest_info() {
+            match config_edit::toggle_quest_disabled(&quest.game_id, &quest.name) {
+                Ok(now_disabled) => {
+                    let verb = if now_disabled {
+                        quest.mark_incomplete();
+                        "Disabled"
+                    } else {
+                        "Enabled"
+                    };
+                    self.status_msg = Some(format!("{verb} '{}'.", quest.name));
+                    self.reload_quests();
+                }
+                Err(e) => {
+                    self.status_msg = Some(format!("Error: {e}"));
+                }
+            }
         }
     }
 
@@ -631,6 +649,9 @@ pub fn run(quests: Vec<Quest>, state: AppState, config: &RawConfig, tz: Tz) -> R
             KeyCode::Char('u') => {
                 app.mark_selected_incomplete();
                 app.status_msg = None;
+            }
+            KeyCode::Char('x') => {
+                app.toggle_selected_disabled();
             }
             // ── CRUD ─────────────────────────────────────────────────
             KeyCode::Char('a') => {

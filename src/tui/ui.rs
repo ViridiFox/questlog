@@ -158,27 +158,38 @@ fn draw_list(
     let ordered: Vec<&Quest> = if sort_done_last {
         let mut available: Vec<&Quest> = Vec::new();
         let mut done: Vec<&Quest> = Vec::new();
+        let mut disabled: Vec<&Quest> = Vec::new();
         for q in quests {
-            if q.is_available(state.last_completed(&q.game_id, &q.name), now) {
+            if q.disabled {
+                disabled.push(q);
+            } else if q.is_available(q.last_completed, now) {
                 available.push(q);
             } else {
                 done.push(q);
             }
         }
-        available.into_iter().chain(done).collect()
+        available.into_iter().chain(done).chain(disabled).collect()
     } else {
         quests.to_vec()
     };
-    let rows: Vec<(bool, [String; 3])> = ordered
+    let rows: Vec<(bool, bool, [String; 3])> = ordered
         .iter()
         .map(|q| {
             let last = state.last_completed(&q.game_id, &q.name);
             let available = q.is_available(last, now);
             let schedule = q.reset_schedule_label();
+            let prefix = if q.disabled {
+                "[-]"
+            } else if available {
+                "[ ]"
+            } else {
+                "[x]"
+            };
             (
                 available,
+                q.disabled,
                 [
-                    format!("{} {}", if available { "[ ]" } else { "[x]" }, q.name),
+                    format!("{} {}", prefix, q.name),
                     schedule,
                     q.format_next_available(last, now, tz),
                 ],
@@ -186,12 +197,14 @@ fn draw_list(
         })
         .collect();
 
-    let w_schedule = rows.iter().map(|(_, r)| r[1].len()).max().unwrap_or(8);
+    let w_schedule = rows.iter().map(|(_, _, r)| r[1].len()).max().unwrap_or(8);
 
     let table_rows: Vec<Row> = rows
         .iter()
-        .map(|(available, cols)| {
-            let (fg, dim) = if *available {
+        .map(|(available, disabled, cols)| {
+            let (fg, dim) = if *disabled {
+                (Color::DarkGray, true)
+            } else if *available {
                 (Color::Green, false)
             } else {
                 (Color::DarkGray, true)
@@ -254,6 +267,7 @@ fn draw_help(f: &mut Frame) {
     const BINDS: &[(&str, &str)] = &[
         ("space / enter", "Mark quest complete"),
         ("u", "Mark quest incomplete"),
+        ("x", "Toggle quest disabled"),
         ("j / ↓", "Move down"),
         ("k / ↑", "Move up"),
         ("Tab", "Next tab"),

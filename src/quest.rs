@@ -31,6 +31,7 @@ pub struct Quest {
     pub name: String,
     pub rules: Vec<ResetRule>,
     pub reset_spec: ResetSpec,
+    pub disabled: bool,
 }
 
 /// Sort key for reset interval length: schedule < interval < daily < weekly
@@ -432,6 +433,7 @@ pub fn build_quests(config: &RawConfig) -> Result<Vec<Quest>> {
                 name: quest_cfg.name.clone(),
                 rules,
                 reset_spec: quest_cfg.reset.clone(),
+                disabled: quest_cfg.disabled,
             });
         }
     }
@@ -493,8 +495,9 @@ fn build_rules(
 
 pub fn sort_quests(quests: &mut [Quest]) {
     quests.sort_by(|a, b| {
-        a.reset_class()
-            .cmp(&b.reset_class())
+        a.disabled
+            .cmp(&b.disabled)
+            .then_with(|| a.reset_class().cmp(&b.reset_class()))
             .then_with(|| a.name.cmp(&b.name))
     });
 }

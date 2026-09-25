@@ -28,6 +28,8 @@ pub struct ResetRuleRaw {
 pub struct QuestConfig {
     pub name: String,
     pub reset: ResetSpec,
+    #[serde(default)]
+    pub disabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

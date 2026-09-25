@@ -299,7 +299,81 @@ pub fn remove_quest(game_id: &str, quest_name: &str) -> Result<()> {
     write_doc(&doc)
 }
 
-// ── reset value parsing ───────────────────────────────────────────────────────
+/// Toggle the `disabled` flag on a quest.
+pub fn toggle_quest_disabled(game_id: &str, quest_name: &str) -> Result<bool> {
+    let mut doc = read_doc()?;
+    let new_val;
+    {
+        let games = games_table_mut(&mut doc);
+        let game = games
+            .get_mut(game_id)
+            .and_then(|i| i.as_table_mut())
+            .with_context(|| format!("game '{}' not found in config", game_id))?;
+
+        match game.get_mut("quests") {
+            Some(Item::ArrayOfTables(aot)) => {
+                let entry = aot
+                    .iter_mut()
+                    .find(|t| t.get("name").and_then(|v| v.as_str()) == Some(quest_name))
+                    .with_context(|| {
+                        format!("quest '{}' not found in game '{}'", quest_name, game_id)
+                    })?;
+                let current = entry
+                    .get("disabled")
+                    .and_then(|v| v.as_value())
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                new_val = !current;
+                if new_val {
+                    entry["disabled"] = value(true);
+                } else {
+                    entry.remove("disabled");
+                }
+            }
+            Some(Item::Value(v)) => {
+                let arr = v.as_array_mut().context("'quests' is not an array")?;
+                let idx = arr
+                    .iter()
+                    .position(|entry| {
+                        entry
+                            .as_inline_table()
+                            .and_then(|t| t.get("name"))
+                            .and_then(|v| v.as_str())
+                            == Some(quest_name)
+                    })
+                    .with_context(|| {
+                        format!("quest '{}' not found in game '{}'", quest_name, game_id)
+                    })?;
+                let current = arr
+                    .get(idx)
+                    .and_then(|e| e.as_inline_table())
+                    .and_then(|t| t.get("disabled"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                new_val = !current;
+                // Rebuild the inline table preserving existing fields.
+                let existing = arr.get(idx).cloned().context("quest entry missing")?;
+                let old_table = existing
+                    .as_inline_table()
+                    .context("quest entry is not an inline table")?;
+                let mut qt = toml_edit::InlineTable::new();
+                for (k, v) in old_table.iter() {
+                    if k != "disabled" {
+                        qt.insert(k, v.clone());
+                    }
+                }
+                if new_val {
+                    qt.insert("disabled", toml_edit::Value::Boolean(toml_edit::Formatted::new(true)));
+                }
+                arr.replace(idx, toml_edit::Value::InlineTable(qt));
+            }
+            _ => bail!("game '{}' has no quests", game_id),
+        }
+    }
+    write_doc(&doc)?;
+    Ok(new_val)
+}
+
 
 /// Accept either a bare shorthand (`daily`, `weekly`) or an inline TOML table
 /// literal such as `{ type = "interval", hours = 4 }`.  Validates both TOML
