@@ -133,12 +133,12 @@ fn main() -> Result<()> {
     let config = config::load_or_create_config()?;
     let mut quests = quest::build_quests(&config)?;
     quest::sort_quests(&mut quests);
-    let mut app_state = state::load_state()?;
+    state::load_state(&mut quests)?;
     let tz = system_tz();
 
     match cli.command {
         None => {
-            let new_state = tui::run(quests, app_state, &config, tz)?;
+            let new_state = tui::run(quests, &config, tz)?;
             state::save_state(&new_state)?;
         }
         Some(Command::List {
@@ -165,7 +165,7 @@ fn main() -> Result<()> {
                     })
                 })
                 .map(|q| {
-                    let last = app_state.last_completed(&q.game_id, &q.name);
+                    let last = q.last_completed;
                     let available = q.is_available(last, now);
                     Row {
                         status: if available { "available" } else { "done" },
@@ -232,12 +232,11 @@ fn main() -> Result<()> {
             }
         }
         Some(Command::Done { name, game }) => {
-            let found = quests.iter().any(|q| q.game_id == game && q.name == name);
-            if !found {
+            let Some(found) = quests.iter_mut().find(|q| q.game_id == game && q.name == name) else {
                 anyhow::bail!("quest '{}' not found in game '{}'", name, game);
-            }
-            app_state.mark_complete(&game, &name, Utc::now());
-            state::save_state(&app_state)?;
+            };
+            found.mark_complete(Utc::now());
+            state::save_state(&quests)?;
             let display_name = quests
                 .iter()
                 .find(|q| q.game_id == game)

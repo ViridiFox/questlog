@@ -4,7 +4,6 @@ pub mod ui;
 use crate::config::{RawConfig, load_config};
 use crate::config_edit::{self, GameSpec, QuestSpec};
 use crate::quest::{Quest, build_quests, sort_quests};
-use crate::state::AppState;
 use anyhow::Result;
 use chrono::Utc;
 use chrono_tz::Tz;
@@ -112,7 +111,13 @@ impl Modal {
             format!("{}{}{}", &old_value[..start], candidate, &old_value[end..])
         };
 
-        let new_cursor = start + candidate.len() + if self.completion.in_quoted_value && !&old_value[end..].starts_with('"') { 1 } else { 0 };
+        let new_cursor = start
+            + candidate.len()
+            + if self.completion.in_quoted_value && !&old_value[end..].starts_with('"') {
+                1
+            } else {
+                0
+            };
         // Build an Input positioned at the new cursor.
         let mut new_input = Input::from(new_value.as_str());
         // Advance cursor to the right position.  tui_input::Input starts at 0;
@@ -124,9 +129,15 @@ impl Modal {
         let cursor_char = total_chars - chars_to_end;
         // Move to start then forward cursor_char times.
         use crossterm::event::{KeyCode as KC, KeyEvent, KeyModifiers as KM};
-        new_input.handle_event(&crossterm::event::Event::Key(KeyEvent::new(KC::Home, KM::NONE)));
+        new_input.handle_event(&crossterm::event::Event::Key(KeyEvent::new(
+            KC::Home,
+            KM::NONE,
+        )));
         for _ in 0..cursor_char {
-            new_input.handle_event(&crossterm::event::Event::Key(KeyEvent::new(KC::Right, KM::NONE)));
+            new_input.handle_event(&crossterm::event::Event::Key(KeyEvent::new(
+                KC::Right,
+                KM::NONE,
+            )));
         }
         self.fields[idx] = new_input;
         self.refresh_completions();
@@ -137,11 +148,7 @@ impl Modal {
     fn new_add_quest(game_id: &str) -> Self {
         let mut m = Self {
             kind: ModalKind::AddQuest,
-            fields: vec![
-                Input::from(game_id),
-                Input::default(),
-                Input::from("daily"),
-            ],
+            fields: vec![Input::from(game_id), Input::default(), Input::from("daily")],
             focused: if game_id.is_empty() { 0 } else { 1 },
             error: None,
             completion: completion::Completion::default(),
@@ -214,7 +221,6 @@ impl Modal {
 
 pub struct App {
     pub quests: Vec<Quest>,
-    pub state: AppState,
     pub selected_tab: usize,
     pub selected_quest: usize,
     pub group_by_game: bool,
@@ -239,11 +245,10 @@ fn games_from_config(config: &RawConfig) -> Vec<(String, String)> {
 }
 
 impl App {
-    pub fn new(mut quests: Vec<Quest>, state: AppState, config: &RawConfig) -> Self {
+    pub fn new(mut quests: Vec<Quest>, config: &RawConfig) -> Self {
         sort_quests(&mut quests);
         Self {
             quests,
-            state,
             selected_tab: 0,
             selected_quest: 0,
             group_by_game: false,
@@ -259,13 +264,13 @@ impl App {
         1 + self.games.len()
     }
 
-    pub fn visible_quests(&self) -> Vec<&Quest> {
+    pub fn visible_quests(&mut self) -> Vec<&mut Quest> {
         if self.selected_tab == 0 {
-            self.quests.iter().collect()
+            self.quests.iter_mut().collect()
         } else {
             let game_id = &self.games[self.selected_tab - 1].0;
             self.quests
-                .iter()
+                .iter_mut()
                 .filter(|q| &q.game_id == game_id)
                 .collect()
         }
@@ -280,26 +285,29 @@ impl App {
         }
     }
 
-    fn selected_quest_info(&self) -> Option<(&str, &str)> {
-        let visible = self.visible_quests();
-        visible
-            .get(self.selected_quest)
-            .map(|q| (q.game_id.as_str(), q.name.as_str()))
+    fn selected_quest_info(&mut self) -> Option<&mut Quest> {
+        let selected_quest = self.selected_quest;
+        let mut visible = self.visible_quests();
+        if selected_quest < visible.len() {
+            Some(visible.swap_remove(selected_quest))
+        } else {
+            None
+        }
     }
 
     fn mark_selected_complete(&mut self) {
-        self.with_selected_quest(|state, game_id, quest_name| {
-            state.mark_complete(game_id, quest_name, Utc::now());
+        self.with_selected_quest(|quest| {
+            quest.mark_complete(Utc::now());
         });
     }
 
     fn mark_selected_incomplete(&mut self) {
-        self.with_selected_quest(|state, game_id, quest_name| {
-            state.mark_incomplete(game_id, quest_name);
+        self.with_selected_quest(|quest| {
+            quest.mark_incomplete();
         });
     }
 
-    fn with_selected_quest(&mut self, f: impl FnOnce(&mut AppState, &str, &str)) {
+    fn with_selected_quest(&mut self, f: impl FnOnce(&mut Quest)) {
         let visible: Vec<usize> = if self.selected_tab == 0 {
             (0..self.quests.len()).collect()
         } else {
@@ -312,11 +320,9 @@ impl App {
                 .collect()
         };
         if let Some(&idx) = visible.get(self.selected_quest) {
-            let (game_id, name) = {
-                let q = &self.quests[idx];
-                (q.game_id.clone(), q.name.clone())
-            };
-            f(&mut self.state, &game_id, &name);
+            f(&mut self.quests[idx]);
+        }
+    }
 
     fn toggle_selected_disabled(&mut self) {
         if let Some(quest) = self.selected_quest_info() {
@@ -338,7 +344,6 @@ impl App {
         }
     }
 
-    /// Reload quests from config after a mutation.
     fn reload_quests(&mut self) {
         match load_config().and_then(|c| {
             let games = games_from_config(&c);
@@ -372,23 +377,17 @@ impl App {
     }
 
     fn open_edit_quest_modal(&mut self) {
-        if let Some((game_id, quest_name)) = self.selected_quest_info() {
-            // Find the reset label for pre-filling.
-            let reset = self
-                .quests
-                .iter()
-                .find(|q| q.game_id == game_id && q.name == quest_name)
-                .map(|q| q.reset_edit_value())
-                .unwrap_or_default();
-            let quest_name = quest_name.to_string();
-            self.modal = Some(Modal::new_edit_quest(&quest_name, &reset));
+        if let Some(quest) = self.selected_quest_info() {
+            self.modal = Some(Modal::new_edit_quest(
+                &quest.name,
+                &quest.reset_edit_value(),
+            ));
         }
     }
 
     fn open_delete_quest_modal(&mut self) {
-        if let Some((game_id, quest_name)) = self.selected_quest_info() {
-            let (game_id, quest_name) = (game_id.to_string(), quest_name.to_string());
-            self.modal = Some(Modal::new_delete_quest(&quest_name, &game_id));
+        if let Some(quest) = self.selected_quest_info() {
+            self.modal = Some(Modal::new_delete_quest(&quest.name, &quest.game_id));
         }
     }
 
@@ -451,9 +450,9 @@ impl App {
                     });
                     return;
                 }
-                let (game_id, _) = self
+                let game_id = self
                     .selected_quest_info()
-                    .map(|(g, n)| (g.to_string(), n.to_string()))
+                    .map(|q| q.game_id.clone())
                     .unwrap_or_default();
                 let orig = original_name.clone();
                 config_edit::update_quest(
@@ -514,14 +513,14 @@ impl App {
 
 // ── event loop ────────────────────────────────────────────────────────────────
 
-pub fn run(quests: Vec<Quest>, state: AppState, config: &RawConfig, tz: Tz) -> Result<AppState> {
+pub fn run(quests: Vec<Quest>, config: &RawConfig, tz: Tz) -> Result<Vec<Quest>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = App::new(quests, state, config);
+    let mut app = App::new(quests, config);
 
     loop {
         terminal.draw(|f| {
@@ -548,20 +547,18 @@ pub fn run(quests: Vec<Quest>, state: AppState, config: &RawConfig, tz: Tz) -> R
                             app.modal = None;
                         }
                     }
-                    KeyCode::Down if modal.reset_field_focused() && !modal.completion.is_empty() => {
+                    KeyCode::Down
+                        if modal.reset_field_focused() && !modal.completion.is_empty() =>
+                    {
                         let len = modal.completion.total_len();
                         modal.completion_selected = (modal.completion_selected + 1) % len;
                     }
                     KeyCode::Up if modal.reset_field_focused() && !modal.completion.is_empty() => {
                         let len = modal.completion.total_len();
-                        modal.completion_selected =
-                            (modal.completion_selected + len - 1) % len;
+                        modal.completion_selected = (modal.completion_selected + len - 1) % len;
                     }
                     // Tab on reset field with popup: accept completion instead of advancing field.
-                    KeyCode::Tab
-                        if modal.reset_field_focused()
-                            && !modal.completion.is_empty() =>
-                    {
+                    KeyCode::Tab if modal.reset_field_focused() && !modal.completion.is_empty() => {
                         modal.accept_completion();
                     }
                     // Tab without popup: advance field as usual.
@@ -577,9 +574,7 @@ pub fn run(quests: Vec<Quest>, state: AppState, config: &RawConfig, tz: Tz) -> R
                     KeyCode::Enter => {
                         if modal.field_count() == 0 {
                             app.submit_modal();
-                        } else if modal.reset_field_focused()
-                            && !modal.completion.is_empty()
-                        {
+                        } else if modal.reset_field_focused() && !modal.completion.is_empty() {
                             // Enter on reset field with popup: accept completion.
                             modal.accept_completion();
                         } else if modal.focused + 1 < modal.field_count() {
@@ -590,9 +585,7 @@ pub fn run(quests: Vec<Quest>, state: AppState, config: &RawConfig, tz: Tz) -> R
                         }
                     }
                     // Ctrl-U: clear the focused field.
-                    KeyCode::Char('u')
-                        if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                    {
+                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         if let Some(field) = modal.fields.get_mut(modal.focused) {
                             *field = Input::default();
                             modal.error = None;
@@ -676,5 +669,5 @@ pub fn run(quests: Vec<Quest>, state: AppState, config: &RawConfig, tz: Tz) -> R
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
-    Ok(app.state)
+    Ok(app.quests)
 }

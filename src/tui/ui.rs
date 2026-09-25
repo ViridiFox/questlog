@@ -1,5 +1,4 @@
 use crate::quest::Quest;
-use crate::state::AppState;
 use crate::tui::{App, Modal, ModalKind};
 use chrono::Utc;
 use chrono_tz::Tz;
@@ -16,7 +15,6 @@ use ratatui::{
 
 pub fn draw(f: &mut Frame, app: &App, tz: Tz) {
     let quests = &app.quests;
-    let state = &app.state;
 
     let tab_titles: Vec<Line> = std::iter::once(Line::from("Overview"))
         .chain(app.games.iter().map(|(_, name)| Line::from(name.clone())))
@@ -62,7 +60,6 @@ pub fn draw(f: &mut Frame, app: &App, tz: Tz) {
             f,
             chunks[1],
             &visible_quests,
-            state,
             now,
             app.sort_done_last,
             tz,
@@ -72,7 +69,6 @@ pub fn draw(f: &mut Frame, app: &App, tz: Tz) {
             f,
             chunks[1],
             &visible_quests,
-            state,
             now,
             app.selected_quest,
             None,
@@ -100,7 +96,6 @@ fn draw_grouped(
     f: &mut Frame,
     area: Rect,
     quests: &[&Quest],
-    state: &AppState,
     now: chrono::DateTime<Utc>,
     sort_done_last: bool,
     tz: Tz,
@@ -133,7 +128,6 @@ fn draw_grouped(
             f,
             chunks[i],
             &game_quests,
-            state,
             now,
             0,
             Some(title),
@@ -148,7 +142,6 @@ fn draw_list(
     f: &mut Frame,
     area: Rect,
     quests: &[&Quest],
-    state: &AppState,
     now: chrono::DateTime<Utc>,
     selected: usize,
     title: Option<&str>,
@@ -175,7 +168,7 @@ fn draw_list(
     let rows: Vec<(bool, bool, [String; 3])> = ordered
         .iter()
         .map(|q| {
-            let last = state.last_completed(&q.game_id, &q.name);
+            let last = q.last_completed;
             let available = q.is_available(last, now);
             let schedule = q.reset_schedule_label();
             let prefix = if q.disabled {

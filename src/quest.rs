@@ -1,4 +1,4 @@
-use crate::config::{GameConfig, QuestConfig, RawConfig, ResetRuleRaw, ResetSpec};
+use crate::{config::{GameConfig, QuestConfig, RawConfig, ResetRuleRaw, ResetSpec}, state::QuestState};
 use anyhow::{Result, bail};
 use chrono::{DateTime, Datelike, Duration, NaiveTime, TimeZone, Utc, Weekday};
 use chrono_tz::Tz;
@@ -32,6 +32,7 @@ pub struct Quest {
     pub rules: Vec<ResetRule>,
     pub reset_spec: ResetSpec,
     pub disabled: bool,
+    pub last_completed: Option<DateTime<Utc>>,
 }
 
 /// Sort key for reset interval length: schedule < interval < daily < weekly
@@ -164,6 +165,24 @@ impl Quest {
                 format!("[{}]", items.join(", "))
             }
         }
+    }
+
+    pub fn mark_complete(&mut self, at: DateTime<Utc>) {
+        self.last_completed = Some(at);
+    }
+
+    pub fn mark_incomplete(&mut self) {
+        self.last_completed = None;
+    }
+
+    /// Combine with state struct
+    pub fn with_state(&mut self, qs: &QuestState) {
+        self.last_completed = qs.last_completed;
+    }
+
+    /// Convert to state struct
+    pub fn as_state(&self) -> QuestState {
+        QuestState { last_completed: self.last_completed }
     }
 }
 
@@ -434,6 +453,7 @@ pub fn build_quests(config: &RawConfig) -> Result<Vec<Quest>> {
                 rules,
                 reset_spec: quest_cfg.reset.clone(),
                 disabled: quest_cfg.disabled,
+                last_completed: None
             });
         }
     }
