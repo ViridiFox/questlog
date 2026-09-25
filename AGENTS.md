@@ -22,11 +22,12 @@ src/
   main.rs        # clap dispatch → tui::run or CLI commands
   config.rs      # deserialize ~/.config/questlog/config.toml, resolve defaults
   config_edit.rs # structure-preserving config mutations via toml_edit (read→patch→atomic rename)
-  state.rs       # load/save ~/.local/share/questlog/state.json
-  quest.rs       # ResetRule variants, availability logic, reset_schedule_label()
+  state.rs       # load/save ~/.local/share/questlog/state.json (hydrates Quest fields on load)
+  quest.rs       # ResetRule variants, availability logic, reset_schedule_label(), validate_reset_spec()
   tui/
-    mod.rs       # App struct, Modal state machine, ratatui event loop
-    ui.rs        # draw(f, &app, tz) — tabs, quest table, modal overlays
+    mod.rs          # App struct, Modal state machine, ratatui event loop
+    ui.rs           # draw(f, &app, tz) — tabs, quest table, modal overlays, completion popup
+    completion.rs   # reset field tab-completion: reset_completions(input, cursor) -> Completion
 ```
 
 ## Key Domain Facts
@@ -37,6 +38,7 @@ src/
 - **Reset types**: `daily`, `weekly`, `interval` (completion-anchored), `schedule` (clock-anchored)
 - **Default resolution**: quest-level → game-level → `[defaults]` → hardcoded (`00:00`, `monday`, `UTC`)
 - `interval` duration fields are additive (`hours = 1, minutes = 30` = 90 min)
+- **`disabled` flag**: `Quest.disabled` (from `QuestConfig.disabled`, `#[serde(default)]`) — disabled quests sort last, render dimmed with `[-]` prefix, and are skipped by sort-done-last bucketing. Toggle with `x` in the TUI.
 
 ## Config Editing (`config_edit.rs`)
 
@@ -46,14 +48,16 @@ All mutations use `toml_edit` to preserve comments and formatting. Writes are at
 - `add_quest` / `update_quest` / `remove_quest` — handle both TOML representations:
   - `[[games.<id>.quests]]` — array of tables (hand-written configs)
   - `quests = [...]` — inline array (written by `add_game`)
+- `toggle_quest_disabled` — handles both TOML representations; removes `disabled` key when toggling back to enabled
 - `update_game`: omitting optional fields (`timezone`, `reset_time`, `reset_day`) **removes** them from config
 - Reset spec for quests: bare string `"daily"` / `"weekly"`, or inline TOML table e.g. `{ type = "interval", hours = 4 }`
+- `parse_reset_value` validates both TOML syntax and semantics (via `quest::validate_reset_spec`) before writing
 
 ## TUI
 
 - `App::new` takes `&RawConfig` — `games` list comes from config, not just quests (includes empty games)
 - After any config mutation, call `app.reload_quests()` to re-parse config and re-sort; it clamps selections
-- `tui::run` signature: `run(quests, state, &config, tz)` — config passed in for `App::new`
+- `tui::run` signature: `run(quests, &config, tz)` — config passed in for `App::new`
 - `ui::draw` signature: `draw(f, &app, tz)` — single `&App` rather than individual fields
 - Modal flow: `App::modal: Option<Modal>` — set via `open_*_modal()` helpers, submitted via `submit_modal()`
 - Status messages (`app.status_msg`) add a 1-line footer row via a conditional layout constraint
@@ -65,6 +69,7 @@ All mutations use `toml_edit` to preserve comments and formatting. Writes are at
 | `a` | Add quest (game tab only) |
 | `e` | Edit selected quest |
 | `d` | Delete selected quest |
+| `x` | Toggle quest disabled |
 | `A` | Add game |
 | `D` | Delete current game (game tab only) |
 | `g` | Toggle group-by-game |
@@ -72,6 +77,8 @@ All mutations use `toml_edit` to preserve comments and formatting. Writes are at
 | `?` | Help overlay |
 
 Modal input: `Tab`/`Shift-Tab` cycle fields, `Enter` on last field submits, `Esc` cancels, `Ctrl-U` clears field.
+
+On the reset field, `Tab`/`Enter` accept the highlighted completion when the popup is open; `↑`/`↓` navigate it; `Esc` dismisses the popup (second `Esc` closes the modal).
 
 ## Dependencies
 
