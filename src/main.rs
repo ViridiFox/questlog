@@ -10,6 +10,8 @@ use chrono_tz::Tz;
 use clap::{Parser, Subcommand};
 use std::str::FromStr;
 
+use crate::quest::load_quests;
+
 fn system_tz() -> Tz {
     iana_time_zone::get_timezone()
         .ok()
@@ -131,9 +133,7 @@ enum Command {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let config = config::load_or_create_config()?;
-    let mut quests = quest::build_quests(&config)?;
-    quest::sort_quests(&mut quests);
-    state::load_state(&mut quests)?;
+    let mut quests = load_quests(&config)?;
     let tz = system_tz();
 
     match cli.command {

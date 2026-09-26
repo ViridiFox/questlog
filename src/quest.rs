@@ -1,6 +1,6 @@
 use crate::{
     config::{GameConfig, QuestConfig, RawConfig, ResetRuleRaw, ResetSpec},
-    state::QuestState,
+    state::{self, QuestState},
 };
 use anyhow::{Result, bail};
 use chrono::{DateTime, Datelike, Duration, NaiveTime, TimeZone, Utc, Weekday};
@@ -435,6 +435,13 @@ fn rule_from_raw(
         }
         other => bail!("unknown reset type '{}'", other),
     }
+}
+
+pub fn load_quests(config: &RawConfig) -> Result<Vec<Quest>> {
+    let mut quests = build_quests(config)?;
+    sort_quests(&mut quests);
+    state::load_state(&mut quests)?;
+    Ok(quests)
 }
 
 pub fn build_quests(config: &RawConfig) -> Result<Vec<Quest>> {

@@ -3,7 +3,8 @@ pub mod ui;
 
 use crate::config::{RawConfig, load_config};
 use crate::config_edit::{self, GameSpec, QuestSpec};
-use crate::quest::{Quest, build_quests, sort_quests};
+use crate::quest::{Quest, load_quests, sort_quests};
+use crate::state;
 use anyhow::Result;
 use chrono::Utc;
 use chrono_tz::Tz;
@@ -299,12 +300,14 @@ impl App {
         self.with_selected_quest(|quest| {
             quest.mark_complete(Utc::now());
         });
+        self.save_state();
     }
 
     fn mark_selected_incomplete(&mut self) {
         self.with_selected_quest(|quest| {
             quest.mark_incomplete();
         });
+        self.save_state();
     }
 
     fn with_selected_quest(&mut self, f: impl FnOnce(&mut Quest)) {
@@ -328,13 +331,15 @@ impl App {
         if let Some(quest) = self.selected_quest_info() {
             match config_edit::toggle_quest_disabled(&quest.game_id, &quest.name) {
                 Ok(now_disabled) => {
+                    let name = quest.name.clone();
                     let verb = if now_disabled {
                         quest.mark_incomplete();
+                        self.save_state();
                         "Disabled"
                     } else {
                         "Enabled"
                     };
-                    self.status_msg = Some(format!("{verb} '{}'.", quest.name));
+                    self.status_msg = Some(format!("{verb} '{}'.", name));
                     self.reload_quests();
                 }
                 Err(e) => {
@@ -344,13 +349,15 @@ impl App {
         }
     }
 
+    fn save_state(&mut self) {
+        if let Err(e) = state::save_state(&self.quests) {
+            self.status_msg = Some(format!("Error: {e}"));
+        }
+    }
+
     fn reload_quests(&mut self) {
-        match load_config().and_then(|c| {
-            let games = games_from_config(&c);
-            build_quests(&c).map(|qs| (qs, games))
-        }) {
-            Ok((mut qs, games)) => {
-                sort_quests(&mut qs);
+        match load_config().and_then(|c| Ok((load_quests(&c)?, games_from_config(&c)))) {
+            Ok((qs, games)) => {
                 self.quests = qs;
                 self.games = games;
                 // Clamp selections.
